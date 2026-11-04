@@ -1,4 +1,4 @@
-﻿# PC Toolkit – Spårkollen
+# PC Toolkit – Spårkollen
 
 Finds out why a Windows computer is slow and fixes what can be fixed safely, without reinstalling Windows.
 
@@ -9,10 +9,12 @@ Finds out why a Windows computer is slow and fixes what can be fixed safely, wit
    - Visar Windows en varning (till exempel *"Windows skyddade datorn"* eller *"Okänd utgivare"*)? Klicka inte förbi den själv – hör av dig till John först.
    - Datorn går spåret i 2–6 minuter. Ingenting ändras under tiden. Sedan öppnas domarprotokollet i webbläsaren.
 2. **Läs domarprotokollet.** Datorn får poäng i tre moment – *Spår* (hårddisk, minne, prestanda), *Lydnad* (Windows, uppstart, inställningar) och *Skydd* (säkerhet, program, hårdvara) – precis som på ett IGP-prov, max 300 poäng.
-3. **Gå till *Träningspass*.** Det som rekommenderas är redan ikryssat. Kryssa i eller ur och klicka **Sök! – Åtgärda valda**.
+3. **Gå till *Ta spåret*.** Det som rekommenderas är redan ikryssat. Kryssa i eller ur och klicka **Sök! – Åtgärda valda**.
    - Låt det **svarta fönstret vara öppet** tills du är klar.
    - När det är klart: klicka **Vila i hundgården (starta om)** om det föreslås, annars **Fot! – Avsluta**.
 4. Kör Spårkollen igen efter omstarten och se om poängen gick upp!
+
+Vill du se rapporten utan hundtema och på engelska? Välj *Classic (English)* i menyn **Tema** högst upp i rapporten.
 
 *The rest of this README is in English. The report is in Swedish with a dog-sport theme by default; see [Themes](#themes) for the plain English version.*
 
@@ -24,7 +26,7 @@ Finds out why a Windows computer is slow and fixes what can be fixed safely, wit
    - Click **Yes** when Windows asks whether to allow changes. You do not need to open PowerShell or "Run as administrator" yourself.
    - Windows may show a warning such as *"Windows protected your PC"*, *"Unknown publisher"* or *"Do you want to run this file?"*. **Do not click past it on your own.** See [If Windows shows a security warning](#if-windows-shows-a-security-warning) below.
    - The check takes 2–6 minutes and changes nothing. The report then opens in your web browser.
-3. **In the report, go to *Fix problems*** (*Träningspass* in the Swedish theme). The recommended fixes are already ticked. Tick or untick what you want and click **Fix selected**.
+3. **In the report, go to *Fix problems*** (*Ta spåret* in the Swedish theme). The recommended fixes are already ticked. Tick or untick what you want and click **Fix selected**.
    - Follow the progress on the page. When it is done you see what was fixed and what you need to do yourself.
    - Click **Restart now** if it is suggested, otherwise **Finish**.
    - **Keep the black PC Toolkit window open** until you are done. It closes by itself when you click Finish.
@@ -75,7 +77,7 @@ The scripts do not use registry cleaners or disable Windows services.
 
 ## The report
 
-`diagnostic-report.html` is a single self-contained file (no internet needed) with an overall verdict, a hardware overview, disk-space bars, findings sorted by severity (with whether they can be fixed from the report or need manual action), the *Fix problems* section and collapsible detail sections. Long lists have a filter box, **Expand all** opens everything, and printing expands all sections automatically. `diagnostic-report.json` contains the same data and is what `Repair.ps1` reads.
+`diagnostic-report.html` is a single self-contained file (no internet needed) with an overall verdict, a hardware overview, disk-space bars, findings sorted by severity (with whether they can be fixed from the report or need manual action), the *Fix problems* section (*Ta spåret*), a theme dropdown and collapsible detail sections. Long lists have a filter box, **Expand all** opens everything, and printing expands all sections automatically. `diagnostic-report.json` contains the same data and is what `Repair.ps1` reads.
 
 Opened directly from the `Reports` folder (for example by a helper), the report is read-only: fixes can only be started while PC Toolkit is running.
 
@@ -83,10 +85,10 @@ Opened directly from the `Reports` folder (for example by a helper), the report 
 
 | Theme | |
 |---|---|
-| **Sparkollen** (default) | *Spårkollen*: everything the user sees is in Swedish. The report is a judge's protocol with a night-time tracking scene and three dogs. The computer is scored like an IGP trial: *Spår* (drive, memory, performance), *Lydnad* (Windows, startup, settings) and *Skydd* (security, apps, hardware), 100 points each, deducting 30/10/3 per critical/warning/tip, with the grades Utmärkt, Mycket bra, Bra, Godtagbar and Bristfällig, and the difference since the last check. A possibly failing drive gives no score, only the backup warning. While fixing, a dog follows a paw-print trail; when done, there is bone confetti. Safety warnings stay plain and serious. |
-| **Neutral** | The original plain English report and console texts. |
+| **Sparkollen** (default, shown as *Spårkollen*) | Everything the user sees is in Swedish. The report is a judge's protocol with a night-time tracking scene and three dogs. The computer is scored like an IGP trial: *Spår* (drive, memory, performance), *Lydnad* (Windows, startup, settings) and *Skydd* (security, apps, hardware), 100 points each, deducting 30/10/3 per critical/warning/tip, with the grades Utmärkt, Mycket bra, Bra, Godtagbar and Bristfällig, and the difference since the last check. A possibly failing drive gives no score, only the backup warning. While fixing, a dog follows a paw-print trail; when done, there is bone confetti. Safety warnings stay plain and serious. |
+| **Neutral** (shown as *Classic (English)*) | The original plain English report and console texts. |
 
-Choose with `-Theme`, for example `.\scripts\Diagnose.ps1 -Theme Neutral`. Repairs started from the report use the report's theme; `Repair.ps1 -Theme` overrides it.
+Every check writes the report in both themes: `diagnostic-report.html` in the chosen theme and `diagnostic-report-<theme>.html` in the other. The **Tema/Theme** dropdown at the top of the report switches between them, both when opened from the report server and when the saved file is opened directly. `-Theme` chooses the default (and the console language), for example `.\scripts\Diagnose.ps1 -Theme Neutral`. Repairs started from the report use the theme of the page they were started from; `Repair.ps1 -Theme` overrides it when run by hand.
 
 Translations are keyed by the English text, so a missing Swedish text falls back to English. Untranslated texts met during a run are listed in `Meta.MissingTranslations` in `diagnostic-report.json`, and the self-test fails if any text in the scripts or the fix panel lacks a Swedish version.
 
