@@ -3,8 +3,9 @@
     Self-test for PC Toolkit that does not require administrator permissions.
 
 .DESCRIPTION
-    Verifies that the scripts parse, runs a diagnosis without elevation, validates the
-    JSON and HTML reports, performs a Repair.ps1 dry run (-WhatIf -AutomaticOnly), tests the
+    Verifies that the scripts parse, that every text has a Swedish translation for the Sparkollen
+    theme, runs a diagnosis without elevation in both themes, validates the JSON and HTML
+    reports, performs a Repair.ps1 dry run (-WhatIf -AutomaticOnly), tests the
     local fix page (ReportServer.ps1 -DryRun), and checks that repairs are refused when a
     report indicates a failing drive.
     No system changes are made. Test reports are removed afterwards unless -KeepReports is used.
@@ -47,7 +48,8 @@ function Invoke-ToolkitScript([string]$Script, [string[]]$Arguments) {
 Write-Host "`nPC Toolkit self-test (no administrator permissions needed)`n" -ForegroundColor Cyan
 
 Write-Host 'Syntax'
-foreach ($file in Get-ChildItem -LiteralPath $root -Filter '*.ps1') {
+$langRoot = Join-Path $root 'lang\sv'
+foreach ($file in @(Get-ChildItem -LiteralPath $root -Filter '*.ps1') + @(Get-ChildItem -LiteralPath $langRoot -Filter '*.psd1')) {
     $errors = $null
     [void][System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors)
     $bytes = [System.IO.File]::ReadAllBytes($file.FullName)
@@ -63,6 +65,43 @@ foreach ($launcher in Get-ChildItem -LiteralPath (Split-Path -Parent $root) -Fil
     $missing = @($targets | Where-Object { -not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $root) $_)) })
     Add-Result "Launcher $($launcher.Name)" ($targets.Count -and -not $missing.Count) $(if ($missing.Count) { "missing: $($missing -join ', ')" } else { $targets -join ', ' })
 }
+$themeFiles = @('report-fix.js', 'themes\sparkollen.css', 'themes\sparkollen-symbols.svg')
+$missingThemeFiles = @($themeFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $root $_)) })
+Add-Result 'Report and theme files exist' (-not $missingThemeFiles.Count) ($missingThemeFiles -join ', ')
+
+Write-Host "`nTranslations (Sparkollen theme)"
+# Keys are the English texts. Every T '...' in the scripts and every t('...') in the fix panel must have a Swedish
+# text with the same {n} placeholders, and the same key must not be translated differently in two files.
+function Get-PlaceholderSet([string]$Text) { (@([regex]::Matches($Text, '\{(\d+)[^}]*\}') | ForEach-Object { $_.Groups[1].Value }) | Sort-Object -Unique) -join ',' }
+$tables = @{}
+foreach ($file in Get-ChildItem -LiteralPath $langRoot -Filter '*.psd1') { $tables[$file.BaseName] = Import-PowerShellDataFile -LiteralPath $file.FullName }
+$merged = @{}; $conflicts = @(); $placeholderErrors = @()
+foreach ($name in $tables.Keys) {
+    foreach ($key in $tables[$name].Keys) {
+        $value = $tables[$name][$key]
+        if ($merged.ContainsKey($key) -and $merged[$key] -cne $value) { $conflicts += "'$key' ($name)" }
+        $merged[$key] = $value
+        if ((Get-PlaceholderSet $key) -ne (Get-PlaceholderSet $value)) { $placeholderErrors += "'$key' ($name)" }
+    }
+}
+Add-Result 'Swedish texts are consistent between files' (-not $conflicts.Count) ($conflicts -join '; ')
+Add-Result 'Swedish texts keep the {n} placeholders' (-not $placeholderErrors.Count) ($placeholderErrors -join '; ')
+$usedKeys = New-Object System.Collections.Generic.HashSet[string]
+foreach ($file in Get-ChildItem -LiteralPath $root -Filter '*.ps1' | Where-Object Name -ne 'Test-Toolkit.ps1') {
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$null)
+    $calls = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'T' }, $true)
+    foreach ($call in $calls) {
+        $argument = $call.CommandElements[1]
+        if ($argument -is [System.Management.Automation.Language.StringConstantExpressionAst]) { [void]$usedKeys.Add($argument.Value) }
+    }
+}
+$untranslated = @($usedKeys | Where-Object { -not $merged.ContainsKey($_) } | Sort-Object)
+Add-Result 'All script texts have a Swedish translation' (-not $untranslated.Count) "$($usedKeys.Count) text(s)$(if ($untranslated.Count) { '; missing: ' + ($untranslated -join ' | ') })"
+$fixScript = [System.IO.File]::ReadAllText((Join-Path $root 'report-fix.js'))
+$fixKeys = @([regex]::Matches($fixScript, "\bt\('((?:[^'\\]|\\.)*)'") | ForEach-Object { $_.Groups[1].Value.Replace('\"', '"') } | Sort-Object -Unique)
+$fixTable = if ($tables.ContainsKey('Fix')) { $tables['Fix'] } else { @{} }
+$untranslatedFix = @($fixKeys | Where-Object { -not $fixTable.ContainsKey($_) -or $_ -match '\\' })
+Add-Result 'All fix panel texts are in lang\sv\Fix.psd1' (-not $untranslatedFix.Count) "$($fixKeys.Count) text(s)$(if ($untranslatedFix.Count) { '; missing: ' + ($untranslatedFix -join ' | ') })"
 
 Write-Host "`nDiagnosis"
 $reportPath = $null
@@ -98,11 +137,29 @@ if ($reportPath) {
     $htmlPath = Join-Path (Split-Path -Parent $reportPath) 'diagnostic-report.html'
     $html = if (Test-Path -LiteralPath $htmlPath) { Get-Content -LiteralPath $htmlPath -Raw -Encoding UTF8 } else { '' }
     Add-Result 'HTML report is complete' ($html -match '<section id="findings">' -and $html -match 'id="pctk-data"' -and $html -match '</html>\s*$') "$([math]::Round($html.Length / 1KB)) KB"
+    if ($data) {
+        $missingTexts = @($data.Meta.MissingTranslations | Where-Object { $_ })
+        Add-Result 'Report uses the Sparkollen theme by default' ($data.Meta.Theme -eq 'Sparkollen' -and $html -match '<body class="sparkollen">' -and $html -match '<html lang="sv"') "theme: $($data.Meta.Theme)"
+        Add-Result 'Report has no untranslated texts' (-not $missingTexts.Count) ($missingTexts -join ' | ')
+        $phases = @('A', 'B', 'C' | Where-Object { $null -ne $data.Meta.Score.Phases.$_.Points })
+        Add-Result 'Judge''s protocol has a score' ($data.Meta.Score.Total -ge 0 -and $data.Meta.Score.Total -le 300 -and $phases.Count -eq 3 -and $data.Meta.Score.Grade) "$($data.Meta.Score.Total) of 300, $($data.Meta.Score.Grade)"
+    }
+}
+
+if (-not $ReuseReport) {
+    Write-Host '  Running Diagnose.ps1 -Theme Neutral (a few minutes)...' -ForegroundColor DarkGray
+    $started = Get-Date
+    $run = Invoke-ToolkitScript 'Diagnose.ps1' @('-NoElevation', '-Quiet', '-SkipUpdateCheck', '-Theme', 'Neutral')
+    $neutralPath = Get-ChildItem -LiteralPath $reportsRoot -Filter 'diagnostic-report.json' -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -ge $started.AddSeconds(-5) } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+    $neutralHtml = if ($neutralPath) { Get-Content -LiteralPath (Join-Path (Split-Path -Parent $neutralPath) 'diagnostic-report.html') -Raw -Encoding UTF8 } else { '' }
+    Add-Result 'Neutral theme gives a plain English report' ($neutralHtml -match '<html lang="en"' -and $neutralHtml -match '<title>PC Toolkit report - ' -and $neutralHtml -notmatch 'class="sparkollen"' -and $run.Output -match 'Summary of findings') "$([math]::Round(((Get-Date) - $started).TotalSeconds)) s"
 }
 
 Write-Host "`nRepair dry run"
 if ($reportPath -and $data -and $data.Drives.CheckCompleted -and -not $data.Drives.DriveProblem) {
-    $run = Invoke-ToolkitScript 'Repair.ps1' @('-WhatIf', '-AutomaticOnly', '-NoElevation', '-ReportPath', $reportPath)
+    $run = Invoke-ToolkitScript 'Repair.ps1' @('-WhatIf', '-AutomaticOnly', '-NoElevation', '-Theme', 'Neutral', '-ReportPath', $reportPath)
     $whatIfLines = @($run.Output -split "`r?`n" | Where-Object { $_ -match '^What if:' })
     $doneLines = @($run.Output -split "`r?`n" | Where-Object { $_ -match '\[done\]' })
     Add-Result 'Repair.ps1 -WhatIf lists planned actions' ($whatIfLines.Count -gt 0) "$($whatIfLines.Count) planned action(s)"
@@ -175,8 +232,8 @@ if ($reportPath -and $data -and $data.Drives.CheckCompleted -and -not $data.Driv
             $status = (Invoke-Server GET "$($server.Base)status").Content | ConvertFrom-Json
             if ($status.State -eq 'done') { break }
         }
-        $wouldLines = @($status.Log | Where-Object { $_ -match '\[dry run\] Would:' })
-        Add-Result 'Repairs from the fix page finish as a dry run' ($status.State -eq 'done' -and $status.Result.DryRun -and -not @($status.Result.Completed).Count -and $wouldLines.Count) "$($wouldLines.Count) simulated action(s)"
+        $planned = @($status.Result.Planned | Where-Object { $_ })
+        Add-Result 'Repairs from the fix page finish as a dry run' ($status.State -eq 'done' -and $status.Result.DryRun -and -not @($status.Result.Completed).Count -and $planned.Count) "$($planned.Count) simulated action(s)"
     } finally {
         Add-Result 'Finish closes the server' (Stop-TestServer $server) ''
     }
@@ -196,8 +253,10 @@ $fakeReport = [ordered]@{
 }
 $fakeReportPath = Join-Path $fakeFolder 'diagnostic-report.json'
 $fakeReport | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $fakeReportPath -Encoding UTF8
-$run = Invoke-ToolkitScript 'Repair.ps1' @('-WhatIf', '-AutomaticOnly', '-NoElevation', '-ReportPath', $fakeReportPath)
+$run = Invoke-ToolkitScript 'Repair.ps1' @('-WhatIf', '-AutomaticOnly', '-NoElevation', '-Theme', 'Neutral', '-ReportPath', $fakeReportPath)
 Add-Result 'Repair.ps1 stops on a failing drive' ($run.Output -match 'DRIVE MAY BE FAILING' -and $run.Output -notmatch 'What if:') ''
+$run = Invoke-ToolkitScript 'Repair.ps1' @('-WhatIf', '-AutomaticOnly', '-NoElevation', '-Theme', 'Sparkollen', '-ReportPath', $fakeReportPath)
+Add-Result 'Repair.ps1 stops on a failing drive (Sparkollen theme)' ($run.Output -match 'EN DISK KAN' -and $run.Output -notmatch 'What if:') ''
 $server = Start-TestServer $fakeFolder
 try {
     $blocked = Invoke-Server POST "$($server.Base)repair" @{ Options = @('cleanup') } @{ 'X-PCTK-Token' = $server.Token }
