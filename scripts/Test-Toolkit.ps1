@@ -143,6 +143,13 @@ if ($reportPath) {
         Add-Result 'Report has no untranslated texts' (-not $missingTexts.Count) ($missingTexts -join ' | ')
         $phases = @('A', 'B', 'C' | Where-Object { $null -ne $data.Meta.Score.Phases.$_.Points })
         Add-Result 'Judge''s protocol has a score' ($data.Meta.Score.Total -ge 0 -and $data.Meta.Score.Total -le 300 -and $phases.Count -eq 3 -and $data.Meta.Score.Grade) "$($data.Meta.Score.Total) of 300, $($data.Meta.Score.Grade)"
+        $altName = "$($data.Meta.ThemeReports.Neutral)"
+        $altPath = if ($altName) { Join-Path (Split-Path -Parent $reportPath) $altName } else { '' }
+        $altHtml = if ($altPath -and (Test-Path -LiteralPath $altPath)) { Get-Content -LiteralPath $altPath -Raw -Encoding UTF8 } else { '' }
+        $swedishTitles = @($data.Findings | Where-Object { $_.Title -match '[åäöÅÄÖ]' } | ForEach-Object { [System.Net.WebUtility]::HtmlEncode($_.Title) } | Where-Object { $altHtml.Contains($_) })
+        Add-Result 'Report is also saved in the classic English theme' ($altHtml -match '<html lang="en"' -and $altHtml -match '</html>\s*$' -and -not $swedishTitles.Count) "$altName$(if ($swedishTitles.Count) { '; Swedish findings: ' + ($swedishTitles -join ' | ') })"
+        Add-Result 'Both reports have the theme dropdown' ($html -match 'id="theme-select"' -and $altHtml -match 'id="theme-select"' -and $html.Contains("value=""$altName""") -and $altHtml.Contains('value="diagnostic-report.html"')) ''
+        Add-Result 'Sparkollen report uses Ta spåret and Spårtid' ($html.Contains('Ta spåret') -and $html.Contains('Spårtid:')) ''
     }
 }
 
@@ -219,12 +226,18 @@ if ($reportPath -and $data -and $data.Drives.CheckCompleted -and -not $data.Driv
         Add-Result 'Server rejects changes without the secret header' ($noHeader.Status -eq 403) "HTTP $($noHeader.Status)"
         $invalid = Invoke-Server POST "$($server.Base)repair" @{ Options = @('not-a-real-option') } $auth
         Add-Result 'Server rejects unknown repair options' ($invalid.Status -eq 400) "HTTP $($invalid.Status)"
+        $altName = "$($data.Meta.ThemeReports.Neutral)"
+        $altPage = Invoke-Server GET "$($server.Base)$altName"
+        $jsonFile = Invoke-Server GET "$($server.Base)diagnostic-report.json"
+        Add-Result 'Server shows the other theme and nothing else' ($altName -and $altPage.Status -eq 200 -and $altPage.Content -match 'window\.PCTK=' -and $altPage.Content -match '<html lang="en"' -and $jsonFile.Status -eq 404) "HTTP $($altPage.Status) / $($jsonFile.Status)"
+        $badTheme = Invoke-Server POST "$($server.Base)repair" @{ Options = @('cleanup'); Theme = 'Bogus' } $auth
+        Add-Result 'Server rejects unknown themes' ($badTheme.Status -eq 400) "HTTP $($badTheme.Status)"
 
         $match = [regex]::Match($page.Content, '<script type="application/json" id="pctk-data">(.*?)</script>')
         $options = @(($match.Groups[1].Value | ConvertFrom-Json).options)
         $chosen = @($options | Where-Object Default | ForEach-Object Id)
         if (-not $chosen.Count) { $chosen = @($options | Select-Object -First 1 | ForEach-Object Id) }
-        $start = Invoke-Server POST "$($server.Base)repair" @{ Options = $chosen } $auth
+        $start = Invoke-Server POST "$($server.Base)repair" @{ Options = $chosen; Theme = 'Neutral' } $auth
         Add-Result 'Server starts the selected repairs' ($start.Status -eq 202) "HTTP $($start.Status), $($chosen.Count) option(s)"
         $status = $null
         for ($i = 0; $i -lt 90 -and $start.Status -eq 202; $i++) {
@@ -234,6 +247,8 @@ if ($reportPath -and $data -and $data.Drives.CheckCompleted -and -not $data.Driv
         }
         $planned = @($status.Result.Planned | Where-Object { $_ })
         Add-Result 'Repairs from the fix page finish as a dry run' ($status.State -eq 'done' -and $status.Result.DryRun -and -not @($status.Result.Completed).Count -and $planned.Count) "$($planned.Count) simulated action(s)"
+        $swedishResult = @(@($status.Result.Manual) | Where-Object { "$_" -match '[åäöÅÄÖ]' })
+        Add-Result 'Repairs use the theme of the page they were started from' ($status.State -eq 'done' -and -not $swedishResult.Count) ($swedishResult -join ' | ')
     } finally {
         Add-Result 'Finish closes the server' (Stop-TestServer $server) ''
     }
