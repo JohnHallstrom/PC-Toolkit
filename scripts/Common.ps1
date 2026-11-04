@@ -4,20 +4,58 @@ $script:ReportsRoot = Join-Path $script:ToolkitRoot 'Reports'
 $script:Themes = @('Sparkollen', 'Neutral')
 $script:ToolkitTheme = 'Neutral'
 $script:Strings = @{}
+$script:SvStrings = $null
 $script:MissingStrings = New-Object System.Collections.Generic.HashSet[string]
+# Every translated text is remembered in both languages, so a report can be rendered in either theme afterwards.
+$script:TextEn = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+$script:TextSv = New-Object 'System.Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
 
-# Sparkollen = Swedish dog-sport theme (default), Neutral = plain English. Translations live in lang\sv\*.psd1,
+# Sparkollen = Swedish dog-sport theme "Spårkollen" (default), Neutral = plain English. Translations live in lang\sv\*.psd1,
 # keyed by the English text (with {0} placeholders), so a missing translation falls back to English.
 function Set-ToolkitTheme([string]$Theme) {
     if ($script:Themes -notcontains $Theme) { $Theme = 'Sparkollen' }
     $script:ToolkitTheme = $Theme
-    $script:Strings = @{}
-    if ($Theme -eq 'Sparkollen') {
+    if ($null -eq $script:SvStrings) {
+        $script:SvStrings = @{}
         foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'lang\sv') -Filter '*.psd1' -ErrorAction SilentlyContinue) {
             $table = Import-PowerShellDataFile -LiteralPath $file.FullName
-            foreach ($key in $table.Keys) { $script:Strings[$key] = $table[$key] }
+            foreach ($key in $table.Keys) { $script:SvStrings[$key] = $table[$key] }
         }
     }
+    $script:Strings = if ($Theme -eq 'Sparkollen') { $script:SvStrings } else { @{} }
+}
+
+function Get-ThemeDisplayName([string]$Theme) {
+    switch ($Theme) { 'Sparkollen' { "Sp$([char]0xE5)rkollen" } default { 'Classic (English)' } }
+}
+
+function Register-ThemeText([string]$English, [string]$Swedish) {
+    if ($English -and $Swedish -and $English -cne $Swedish) {
+        $script:TextEn[$Swedish] = $English
+        $script:TextSv[$English] = $Swedish
+    }
+}
+
+# Returns a text produced by T or Join-T in the language of the given theme. Other values are returned unchanged.
+function ConvertTo-ThemeText($Value, [string]$Theme = $script:ToolkitTheme) {
+    if ($Value -isnot [string] -or -not $Value) { return $Value }
+    $mapped = $null
+    $map = if ($Theme -eq 'Sparkollen') { $script:TextSv } else { $script:TextEn }
+    if ($map.TryGetValue($Value, [ref]$mapped)) { return $mapped }
+    $Value
+}
+
+function Get-FindingText($Finding, [string]$Field) {
+    $themed = if ($Finding.Texts) { $Finding.Texts.($script:ToolkitTheme) }
+    if ($themed -and $null -ne $themed.$Field) { $themed.$Field } else { $Finding.$Field }
+}
+
+function Join-T($Parts, [string]$Separator = ' ') {
+    $items = @($Parts | Where-Object { $null -ne $_ })
+    $english = @($items | ForEach-Object { ConvertTo-ThemeText "$_" 'Neutral' }) -join $Separator
+    $swedish = @($items | ForEach-Object { ConvertTo-ThemeText "$_" 'Sparkollen' }) -join $Separator
+    Register-ThemeText $english $swedish
+    if ($script:ToolkitTheme -eq 'Sparkollen') { $swedish } else { $english }
 }
 
 function Get-StringTable([string]$Name) {
@@ -27,11 +65,26 @@ function Get-StringTable([string]$Name) {
 
 # Translates English text for the active theme. Extra arguments fill {0}, {1}, ...
 function T([string]$Text) {
-    $template = $Text
-    if ($script:ToolkitTheme -eq 'Sparkollen' -and $Text) {
-        if ($script:Strings.ContainsKey($Text)) { $template = $script:Strings[$Text] } else { [void]$script:MissingStrings.Add($Text) }
+    if ($null -eq $script:SvStrings) { Set-ToolkitTheme $script:ToolkitTheme }
+    $swedish = $Text
+    if ($Text) {
+        if ($script:SvStrings.ContainsKey($Text)) { $swedish = $script:SvStrings[$Text] }
+        elseif ($script:ToolkitTheme -eq 'Sparkollen') { [void]$script:MissingStrings.Add($Text) }
     }
-    if ($args.Count) { $template -f $args } else { $template }
+    $english = $Text
+    if ($args.Count) {
+        # Typed declarations: an array from New-Object is PSObject-wrapped and -f would see it as one argument.
+        [object[]]$englishArgs = New-Object object[] $args.Count
+        [object[]]$swedishArgs = New-Object object[] $args.Count
+        for ($i = 0; $i -lt $args.Count; $i++) {
+            $englishArgs[$i] = ConvertTo-ThemeText $args[$i] 'Neutral'
+            $swedishArgs[$i] = ConvertTo-ThemeText $args[$i] 'Sparkollen'
+        }
+        $english = $Text -f $englishArgs
+        $swedish = $swedish -f $swedishArgs
+    }
+    Register-ThemeText $english $swedish
+    if ($script:ToolkitTheme -eq 'Sparkollen') { $swedish } else { $english }
 }
 
 # Translates a display value (status, health, category...) when a translation exists; other values are shown as-is.

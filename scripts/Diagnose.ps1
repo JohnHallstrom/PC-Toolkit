@@ -83,7 +83,7 @@ function Invoke-Check([string]$Name, [scriptblock]$Code) {
     $script:stepNumber++
     Write-Host ("[{0,2}/11] {1}..." -f $script:stepNumber, $Name) -ForegroundColor Cyan
     try { & $Code } catch {
-        $script:scriptErrors.Add("$Name`: $($_.Exception.Message)")
+        $script:scriptErrors.Add((Join-T @($Name, $_.Exception.Message) ': '))
         Write-Warning (T "Could not complete '{0}': {1}" $Name $_.Exception.Message)
     }
 }
@@ -214,7 +214,7 @@ Invoke-Check (T 'Physical drives and drive health') {
     }
     if ($driveProblem) {
         Add-Finding -Id 'DRIVE_FAILING' -Severity Critical -Category Drive -Title (T 'A drive may be failing') `
-            -Details ($problemDetails -join ' ') `
+            -Details (Join-T $problemDetails ' ') `
             -Recommendation (T 'BACK UP IMPORTANT FILES NOW (Documents, Pictures, Desktop, game saves). Do not run intensive repairs first. Replace the drive, ideally by cloning it to a new SSD.') `
             -Action Manual
     } elseif ($driveEvents.Count) {
@@ -688,18 +688,34 @@ if ($previousReport) {
         if ($previousMeta.Score) { $score.Previous = [ordered]@{ Total = [int]$previousMeta.Score.Total; Date = $previousMeta.Date } }
     } catch {}
 }
+$runTheme = $script:ToolkitTheme
+$themeReports = [ordered]@{}
+foreach ($themeName in @($runTheme) + @($script:Themes | Where-Object { $_ -ne $runTheme })) {
+    $themeReports[$themeName] = if ($themeName -eq $runTheme) { 'diagnostic-report.html' } else { "diagnostic-report-$($themeName.ToLowerInvariant()).html" }
+}
 $script:report.Meta = [ordered]@{
     Version = $script:ToolkitVersion
     Date = $startedAt.ToString('yyyy-MM-dd HH:mm')
     RanAsAdmin = $isAdmin
     DurationSeconds = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 0)
-    Theme = $script:ToolkitTheme
+    Theme = $runTheme
+    ThemeReports = $themeReports
     Score = $score
     ScriptErrors = @($script:scriptErrors)
     MissingTranslations = @()
 }
 $script:report.Findings = $findings
-
+foreach ($finding in $findings) {
+    $texts = [ordered]@{}
+    foreach ($themeName in $script:Themes) {
+        $texts[$themeName] = [ordered]@{
+            Title = ConvertTo-ThemeText $finding.Title $themeName
+            Details = ConvertTo-ThemeText $finding.Details $themeName
+            Recommendation = ConvertTo-ThemeText $finding.Recommendation $themeName
+        }
+    }
+    $finding | Add-Member -NotePropertyName Texts -NotePropertyValue $texts -Force
+}
 $outputFolder = Join-Path $script:ReportsRoot $folderName
 New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
 $jsonPath = Join-Path $outputFolder 'diagnostic-report.json'
@@ -755,7 +771,7 @@ function Test-IsNumber($Value) { $Value -is [System.ValueType] -and $Value -isno
 function New-Pill([string]$Text, [string]$Class) { "<span class=""pill $Class"">$(ConvertTo-SafeHtml (Tv $Text))</span>" }
 function Format-Cell([string]$Column, $Value) {
     if ($null -eq $Value -or "$Value" -eq '') { return '<span class="muted">&ndash;</span>' }
-    if ($Value -is [array]) { return ConvertTo-SafeHtml ($Value -join ', ') }
+    if ($Value -is [array]) { return ConvertTo-SafeHtml (@($Value | ForEach-Object { ConvertTo-ThemeText $_ }) -join ', ') }
     switch ($Column) {
         'Suggestion' {
             $class = switch -Wildcard ($Value) { 'Keep' { 'good' } 'Can be disabled' { 'warn' } 'Optional' { 'info' } default { 'muted' } }
@@ -768,7 +784,7 @@ function Format-Cell([string]$Column, $Value) {
         'Scope' { return ConvertTo-SafeHtml (Tv $Value) }
     }
     if ($Value -is [bool]) { return $(if ($Value) { T 'Yes' } else { T 'No' }) }
-    ConvertTo-SafeHtml $Value
+    ConvertTo-SafeHtml (ConvertTo-ThemeText $Value)
 }
 function ConvertTo-HtmlTable($Data) {
     $rows = @($Data | Where-Object { $null -ne $_ } | ForEach-Object {
@@ -847,210 +863,219 @@ function New-Stat([string]$Label, $Value, [string]$Hint) {
     "<div class=""card stat""><div class=""label"">$(ConvertTo-SafeHtml $Label)</div><div class=""value"">$(ConvertTo-SafeHtml $Value)</div>$hintHtml</div>"
 }
 
-# Overview cards
-$system = $script:report.System
-$memory = $script:report.Memory
-$stats = @()
-if ($system) {
-    $stats += New-Stat 'Windows' ($system.Windows -replace '^Microsoft\s+', '') (T 'Version {0}, build {1}' $system.Version $system.Build)
-    $stats += New-Stat (T 'Processor') ($system.Processor -replace '\((R|TM)\)', '' -replace '\s+', ' ') (T '{0} cores / {1} threads' $system.Cores $system.Threads)
-    $stats += New-Stat (T 'Uptime') (T '{0} days' $system.UptimeDays) (T 'Last boot {0}' $system.LastBoot)
-}
-if ($memory) {
-    $stats += New-Stat (T 'Memory') "$($memory.TotalGB) GB $($memory.Type)" (T '{0} % in use, {1} module(s) at {2} MHz' $memory.UsedPercent $memory.ModuleCount $memory.ConfiguredMHz)
-}
-$graphicsCards = @($script:report.Updates.GraphicsCards | Where-Object { $_ })
-if ($graphicsCards.Count) {
-    $mainGpu = $graphicsCards | Sort-Object { if ($_.Name -match 'Intel|Microsoft Basic') { 1 } else { 0 } } | Select-Object -First 1
-    $stats += New-Stat (T 'Graphics') $mainGpu.Name (T 'Driver {0} ({1} months old)' $mainGpu.DriverVersion $mainGpu.AgeMonths)
-}
-$systemDrive = @($script:report.Drives.Physical | Where-Object IsSystemDrive) | Select-Object -First 1
-if ($systemDrive) {
-    $stats += New-Stat (T 'System drive') "$($systemDrive.MediaType) ($($systemDrive.BusType))" (T '{0}, health: {1}' $systemDrive.Name (Tv $systemDrive.Health))
-}
-if ($script:report.Startup) {
-    $stats += New-Stat (T 'Startup apps') (T '{0} enabled' $script:report.Startup.EnabledCount) (T '{0} third-party services' (@($script:report.Startup.ThirdPartyServices).Count))
-}
-if ($script:report.Errors) {
-    $stats += New-Stat (T 'Stability index') "$($script:report.Errors.StabilityIndex) / 10" (T '{0} errors in the last 7 days' $script:report.Errors.ErrorCount7Days)
-}
+function Write-HtmlReport([string]$RenderTheme, [string]$Path) {
+    Set-ToolkitTheme $RenderTheme
+    $sparkollen = $RenderTheme -eq 'Sparkollen'
 
-# Verdict
-$counts = @{}
-foreach ($severity in 'Critical', 'Warning', 'Info', 'OK') {
-    $counts[$severity] = @($findings | Where-Object Severity -eq $severity).Count
-}
-$problems = @($findings | Where-Object { $_.Severity -in 'Critical', 'Warning' })
-$autoCount = @($problems | Where-Object Action -eq 'Automatic').Count
-$askCount = @($problems | Where-Object Action -eq 'Ask').Count
-$manualCount = @($problems | Where-Object Action -eq 'Manual').Count
-$planParts = @()
-if ($autoCount + $askCount) { $planParts += T '{0} can be fixed under Fix problems below' ($autoCount + $askCount) }
-if ($manualCount) { $planParts += T '{0} need manual action' $manualCount }
-$planText = if ($planParts.Count) { T 'Of the {0} issue(s): {1}.' $problems.Count ($planParts -join ', ') } else { '' }
-$driveProblem = [bool]$script:report.Drives.DriveProblem
-if ($driveProblem) {
-    $verdictClass = 'bad'; $verdictTitle = T 'A drive may be failing'
-    $verdictText = T 'Back up important files now. Do not run cleanup, defragmentation or chkdsk until the drive has been checked.'
-} elseif ($counts.Critical) {
-    $verdictClass = 'bad'; $verdictTitle = T 'Needs attention'
-    $verdictText = $planText
-} elseif ($counts.Warning) {
-    $verdictClass = 'warn'; $verdictTitle = T 'Some issues found'
-    $verdictText = $planText
-} else {
-    $verdictClass = 'good'; $verdictTitle = T 'Looks healthy'
-    $verdictText = T 'No significant problems were found.'
-}
-$driveBlocked = $driveProblem -or -not [bool]$script:report.Drives.CheckCompleted
-$verdictButton = if ($driveBlocked -or -not $problems.Count) { '' } else { "<a class=""cta"" href=""#fix"">$(T 'Fix problems') &rarr;</a>" }
-
-$gradeClasses = @{ Excellent = 'good'; 'Very good' = 'good'; Good = 'info'; Sufficient = 'warn'; Insufficient = 'bad' }
-if ($sparkollen) {
-    $verdictTitle = if ($driveProblem) { T 'Vet visit needed - back up now' } else {
-        switch ($score.Grade) {
-            'Excellent' { T 'Excellent work! The computer is in top form.' }
-            'Very good' { T 'Very good! Just a few small things to practise.' }
-            'Good' { T 'Good work - a few things to train on.' }
-            'Sufficient' { T 'Passed, but it needs more training.' }
-            default { T 'Not passed this time - time for a training session.' }
-        }
+    # Overview cards
+    $system = $script:report.System
+    $memory = $script:report.Memory
+    $stats = @()
+    if ($system) {
+        $stats += New-Stat 'Windows' ($system.Windows -replace '^Microsoft\s+', '') (T 'Version {0}, build {1}' $system.Version $system.Build)
+        $stats += New-Stat (T 'Processor') ($system.Processor -replace '\((R|TM)\)', '' -replace '\s+', ' ') (T '{0} cores / {1} threads' $system.Cores $system.Threads)
+        $stats += New-Stat (T 'Uptime') (T '{0} days' $system.UptimeDays) (T 'Last boot {0}' $system.LastBoot)
     }
-    $phaseHtml = foreach ($key in $script:trialPhases.Keys) {
-        $phase = $script:trialPhases[$key]
-        $phaseScore = $score.Phases[$key]
-        $points = if ($driveProblem) { '&ndash;' } else { $phaseScore.Points }
-        $stamp = if ($driveProblem) { '' } else { "<span class=""stamp $($gradeClasses[$phaseScore.Grade])"">$(T $phaseScore.Grade)</span>" }
-        $fillWidth = if ($driveProblem) { 0 } else { $phaseScore.Points }
-        @"
+    if ($memory) {
+        $stats += New-Stat (T 'Memory') "$($memory.TotalGB) GB $($memory.Type)" (T '{0} % in use, {1} module(s) at {2} MHz' $memory.UsedPercent $memory.ModuleCount $memory.ConfiguredMHz)
+    }
+    $graphicsCards = @($script:report.Updates.GraphicsCards | Where-Object { $_ })
+    if ($graphicsCards.Count) {
+        $mainGpu = $graphicsCards | Sort-Object { if ($_.Name -match 'Intel|Microsoft Basic') { 1 } else { 0 } } | Select-Object -First 1
+        $stats += New-Stat (T 'Graphics') $mainGpu.Name (T 'Driver {0} ({1} months old)' $mainGpu.DriverVersion $mainGpu.AgeMonths)
+    }
+    $systemDrive = @($script:report.Drives.Physical | Where-Object IsSystemDrive) | Select-Object -First 1
+    if ($systemDrive) {
+        $stats += New-Stat (T 'System drive') "$($systemDrive.MediaType) ($($systemDrive.BusType))" (T '{0}, health: {1}' $systemDrive.Name (Tv $systemDrive.Health))
+    }
+    if ($script:report.Startup) {
+        $stats += New-Stat (T 'Startup apps') (T '{0} enabled' $script:report.Startup.EnabledCount) (T '{0} third-party services' (@($script:report.Startup.ThirdPartyServices).Count))
+    }
+    if ($script:report.Errors) {
+        $stats += New-Stat (T 'Stability index') "$($script:report.Errors.StabilityIndex) / 10" (T '{0} errors in the last 7 days' $script:report.Errors.ErrorCount7Days)
+    }
+
+    # Verdict
+    $counts = @{}
+    foreach ($severity in 'Critical', 'Warning', 'Info', 'OK') {
+        $counts[$severity] = @($findings | Where-Object Severity -eq $severity).Count
+    }
+    $problems = @($findings | Where-Object { $_.Severity -in 'Critical', 'Warning' })
+    $autoCount = @($problems | Where-Object Action -eq 'Automatic').Count
+    $askCount = @($problems | Where-Object Action -eq 'Ask').Count
+    $manualCount = @($problems | Where-Object Action -eq 'Manual').Count
+    $planParts = @()
+    if ($autoCount + $askCount) { $planParts += T '{0} can be fixed under Fix problems below' ($autoCount + $askCount) }
+    if ($manualCount) { $planParts += T '{0} need manual action' $manualCount }
+    $planText = if ($planParts.Count) { T 'Of the {0} issue(s): {1}.' $problems.Count (Join-T $planParts ', ') } else { '' }
+    $driveProblem = [bool]$script:report.Drives.DriveProblem
+    if ($driveProblem) {
+        $verdictClass = 'bad'; $verdictTitle = T 'A drive may be failing'
+        $verdictText = T 'Back up important files now. Do not run cleanup, defragmentation or chkdsk until the drive has been checked.'
+    } elseif ($counts.Critical) {
+        $verdictClass = 'bad'; $verdictTitle = T 'Needs attention'
+        $verdictText = $planText
+    } elseif ($counts.Warning) {
+        $verdictClass = 'warn'; $verdictTitle = T 'Some issues found'
+        $verdictText = $planText
+    } else {
+        $verdictClass = 'good'; $verdictTitle = T 'Looks healthy'
+        $verdictText = T 'No significant problems were found.'
+    }
+    $driveBlocked = $driveProblem -or -not [bool]$script:report.Drives.CheckCompleted
+    $verdictButton = if ($driveBlocked -or -not $problems.Count) { '' } else { "<a class=""cta"" href=""#fix"">$(T 'Fix problems') &rarr;</a>" }
+
+    $gradeClasses = @{ Excellent = 'good'; 'Very good' = 'good'; Good = 'info'; Sufficient = 'warn'; Insufficient = 'bad' }
+    if ($sparkollen) {
+        $verdictTitle = if ($driveProblem) { T 'Vet visit needed - back up now' } else {
+            switch ($score.Grade) {
+                'Excellent' { T 'Excellent work! The computer is in top form.' }
+                'Very good' { T 'Very good! Just a few small things to practise.' }
+                'Good' { T 'Good work - a few things to train on.' }
+                'Sufficient' { T 'Passed, but it needs more training.' }
+                default { T 'Not passed this time - time for a training session.' }
+            }
+        }
+        $phaseHtml = foreach ($key in $script:trialPhases.Keys) {
+            $phase = $script:trialPhases[$key]
+            $phaseScore = $score.Phases[$key]
+            $points = if ($driveProblem) { '&ndash;' } else { $phaseScore.Points }
+            $stamp = if ($driveProblem) { '' } else { "<span class=""stamp $($gradeClasses[$phaseScore.Grade])"">$(T $phaseScore.Grade)</span>" }
+            $fillWidth = if ($driveProblem) { 0 } else { $phaseScore.Points }
+            @"
 <div class="phase"><div class="ph-letter">$key</div><div class="ph-body"><div class="ph-name">$(T $phase.Name)</div><div class="hint">$(T $phase.Covers)</div>
 <div class="bar"><div class="fill $($gradeClasses[$phaseScore.Grade])" style="width:$fillWidth%"></div></div></div>
 <div class="ph-score"><b>$points</b><span>/ 100</span>$stamp</div></div>
 "@
-    }
-    if ($driveProblem) {
-        $totalHtml = "<div class=""total vet""><b>!</b><span>$(T 'No points until the drive has been checked')</span></div>"
-    } else {
-        $previousHtml = ''
-        if ($score.Previous) {
-            $difference = $score.Total - $score.Previous.Total
-            $differenceText = if ($difference -gt 0) { "+$difference" } elseif ($difference -lt 0) { "$difference" } else { '&plusmn;0' }
-            $differenceClass = if ($difference -gt 0) { 'up' } elseif ($difference -lt 0) { 'down' } else { '' }
-            $previousHtml = "<small class=""prev"">$(T 'Last time ({0}): {1} points' (ConvertTo-SafeHtml $score.Previous.Date) $score.Previous.Total) <b class=""$differenceClass"">$differenceText</b></small>"
         }
-        $totalHtml = "<div class=""total""><div class=""kicker"">$(T 'Total')</div><b>$($score.Total)</b><span>$(T 'of 300 points')</span><span class=""stamp big $($gradeClasses[$score.Grade])"">$(T $score.Grade)</span>$previousHtml</div>"
-    }
-    $verdictHtml = @"
+        if ($driveProblem) {
+            $totalHtml = "<div class=""total vet""><b>!</b><span>$(T 'No points until the drive has been checked')</span></div>"
+        } else {
+            $previousHtml = ''
+            if ($score.Previous) {
+                $difference = $score.Total - $score.Previous.Total
+                $differenceText = if ($difference -gt 0) { "+$difference" } elseif ($difference -lt 0) { "$difference" } else { '&plusmn;0' }
+                $differenceClass = if ($difference -gt 0) { 'up' } elseif ($difference -lt 0) { 'down' } else { '' }
+                $previousHtml = "<small class=""prev"">$(T 'Last time ({0}): {1} points' (ConvertTo-SafeHtml $score.Previous.Date) $score.Previous.Total) <b class=""$differenceClass"">$differenceText</b></small>"
+            }
+            $totalHtml = "<div class=""total""><div class=""kicker"">$(T 'Total')</div><b>$($score.Total)</b><span>$(T 'of 300 points')</span><span class=""stamp big $($gradeClasses[$score.Grade])"">$(T $score.Grade)</span>$previousHtml</div>"
+        }
+        $verdictHtml = @"
 <div class="verdict protocol $verdictClass"><div class="proto-head"><div class="proto-text"><div class="kicker">$(T 'Judge''s protocol')</div><h2>$(ConvertTo-SafeHtml $verdictTitle)</h2>
 <p>$(ConvertTo-SafeHtml $verdictText)</p><p class="tally">$(T '{0} critical, {1} warnings, {2} tips, {3} OK' $counts.Critical $counts.Warning $counts.Info $counts.OK)</p>$verdictButton</div>$totalHtml</div>
 <div class="phases">$($phaseHtml -join "`n")</div></div>
 "@
-} else {
-    $verdictHtml = @"
+    } else {
+        $verdictHtml = @"
 <div class="verdict $verdictClass"><div><h2>$verdictTitle</h2><p>$(ConvertTo-SafeHtml $verdictText)</p>$verdictButton</div>
 <div class="counts"><div class="count-box critical"><b>$($counts.Critical)</b>Critical</div><div class="count-box warning"><b>$($counts.Warning)</b>Warnings</div><div class="count-box info"><b>$($counts.Info)</b>Info</div><div class="count-box ok"><b>$($counts.OK)</b>OK</div></div></div>
 "@
-}
-
-# Findings
-$actionLabels = @{ Automatic = @((T 'Fix available below'), 'good'); Ask = @((T 'You choose below'), 'info'); Manual = @((T 'Manual action'), 'warn') }
-$severityOrder = @{ Critical = 0; Warning = 1; Info = 2; OK = 3 }
-function ConvertTo-FindingHtml($Finding) {
-    $class = $Finding.Severity.ToLowerInvariant()
-    $tags = @(New-Pill $Finding.Category 'muted')
-    if ($Finding.Action -and $actionLabels.ContainsKey($Finding.Action)) {
-        $tags += New-Pill $actionLabels[$Finding.Action][0] $actionLabels[$Finding.Action][1]
     }
-    @"
+
+    # Findings
+    $actionLabels = @{ Automatic = @((T 'Fix available below'), 'good'); Ask = @((T 'You choose below'), 'info'); Manual = @((T 'Manual action'), 'warn') }
+    $severityOrder = @{ Critical = 0; Warning = 1; Info = 2; OK = 3 }
+    function ConvertTo-FindingHtml($Finding) {
+        $class = $Finding.Severity.ToLowerInvariant()
+        $tags = @(New-Pill $Finding.Category 'muted')
+        if ($Finding.Action -and $actionLabels.ContainsKey($Finding.Action)) {
+            $tags += New-Pill $actionLabels[$Finding.Action][0] $actionLabels[$Finding.Action][1]
+        }
+        @"
 <div class="finding $class"><div class="sev">$(Tv $Finding.Severity)</div><div class="f-body">
-<div class="f-title">$(ConvertTo-SafeHtml $Finding.Title)</div>
-$(if ($Finding.Details) { "<div class=""f-details"">$(ConvertTo-SafeHtml $Finding.Details)</div>" })
-$(if ($Finding.Recommendation) { "<div class=""f-rec"">&rarr; $(ConvertTo-SafeHtml $Finding.Recommendation)</div>" })
+<div class="f-title">$(ConvertTo-SafeHtml (ConvertTo-ThemeText $Finding.Title))</div>
+$(if ($Finding.Details) { "<div class=""f-details"">$(ConvertTo-SafeHtml (ConvertTo-ThemeText $Finding.Details))</div>" })
+$(if ($Finding.Recommendation) { "<div class=""f-rec"">&rarr; $(ConvertTo-SafeHtml (ConvertTo-ThemeText $Finding.Recommendation))</div>" })
 <div class="tags">$($tags -join ' ')</div></div></div>
 "@
-}
-$sortedFindings = @($findings | Sort-Object { $severityOrder[$_.Severity] })
-$problemFindings = @($sortedFindings | Where-Object Severity -ne 'OK')
-if ($sparkollen) {
-    $phaseDogs = @{ A = 'dog-tracker'; C = 'dog-guard' }
-    $findingHtml = @()
-    foreach ($key in $script:trialPhases.Keys) {
-        $phase = $script:trialPhases[$key]
-        $phaseFindings = @($problemFindings | Where-Object { $_.Category -in $phase.Categories })
-        $dog = if ($phaseDogs[$key]) { "<svg class=""dog-mini"" aria-hidden=""true""><use href=""#$($phaseDogs[$key])""/></svg>" } else { '' }
-        $findingHtml += "<h3 class=""phase-head""><span class=""ph-letter"">$key</span>$(T $phase.Name)<span class=""hint"">$(T $phase.Covers)</span>$dog</h3>"
-        $findingHtml += if ($phaseFindings.Count) { $phaseFindings | ForEach-Object { ConvertTo-FindingHtml $_ } } else { "<p class=""clean"">$(T 'Clean track - nothing found here.')</p>" }
     }
-    $knownCategories = @($script:trialPhases.Values | ForEach-Object { $_.Categories })
-    $findingHtml += @($problemFindings | Where-Object { $_.Category -notin $knownCategories } | ForEach-Object { ConvertTo-FindingHtml $_ })
-} else {
-    $findingHtml = @($problemFindings | ForEach-Object { ConvertTo-FindingHtml $_ })
-}
-$okFindings = @($sortedFindings | Where-Object Severity -eq 'OK')
-if ($okFindings.Count) {
-    $findingHtml += "<details class=""sub""><summary>$(T 'Checks that passed') <span class=""count"">$($okFindings.Count)</span></summary><div class=""pad"">$(($okFindings | ForEach-Object { ConvertTo-FindingHtml $_ }) -join "`n")</div></details>"
-}
-if (-not $findingHtml.Count) { $findingHtml = @("<p class=""empty"">$(T 'No findings.')</p>") }
-
-# Detail sections
-$sections = @()
-$navLinks = @("<a href=""#findings"">$(T 'Findings')</a>")
-$sectionKeys = @($sectionTitles.Keys) + @($script:report.Keys | Where-Object { $_ -notin $sectionTitles.Keys -and $_ -notin 'Meta', 'Findings' })
-foreach ($key in $sectionKeys) {
-    if (-not $script:report.Contains($key)) { continue }
-    $title = if ($sectionTitles.Contains($key)) { T $sectionTitles[$key] } else { ConvertTo-Label $key }
-    $body = if ($key -eq 'Volumes') { ConvertTo-VolumeHtml $script:report[$key] } else { ConvertTo-SectionBody $script:report[$key] }
-    $anchor = $key.ToLowerInvariant()
-    $navLinks += "<a href=""#$anchor"">$(ConvertTo-SafeHtml $title)</a>"
-    $sections += "<section id=""$anchor""><h2>$(ConvertTo-SafeHtml $title)</h2><div class=""card"">$body</div></section>"
-}
-if ($script:scriptErrors.Count) {
-    $navLinks += "<a href=""#script-errors"">$(T 'Incomplete checks')</a>"
-    $sections += "<section id=""script-errors""><h2>$(T 'Checks that could not be completed')</h2><div class=""card""><ul>" +
-        (($script:scriptErrors | ForEach-Object { "<li>$(ConvertTo-SafeHtml $_)</li>" }) -join '') + '</ul></div></section>'
-}
-
-$navLinks = @($navLinks[0], "<a href=""#fix"">$(T 'Fix problems')</a>") + @($navLinks | Select-Object -Skip 1)
-$driveMessage = if ($driveProblem) {
-    T 'A drive may be failing, so PC Toolkit will not change anything. Back up important files now and have the drive checked.'
-} else {
-    T 'The drive health check could not be completed, so PC Toolkit will not change anything. Ask whoever is helping you.'
-}
-$fixData = [ordered]@{
-    options      = @(Get-RepairOptions (Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json))
-    driveBlocked = $driveBlocked
-    driveMessage = $driveMessage
-    theme        = $script:ToolkitTheme
-    strings      = Get-StringTable 'Fix'
-}
-$fixJson = ($fixData | ConvertTo-Json -Depth 4 -Compress).Replace('<', '\u003c').Replace('>', '\u003e').Replace('&', '\u0026')
-$fixScript = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'report-fix.js'))
-
-$adminChip = if ($isAdmin) { "<span class=""chip"">$(T 'Ran as administrator')</span>" } else { "<span class=""chip alert"">$(T 'Not run as administrator &ndash; some data may be missing')</span>" }
-$driveBanner = if ($driveProblem) { "<div class=""banner"">$(T 'A drive may be failing. Back up important files before doing anything else.')</div>" } else { '' }
-$modelText = ''
-if ($system) {
-    $modelName = "$($system.Model)".Trim()
-    if ($system.Manufacturer -and $modelName -notlike "$($system.Manufacturer)*") { $modelName = "$($system.Manufacturer) $modelName" }
-    $modelText = ConvertTo-SafeHtml $modelName.Trim()
-}
-
-$chips = "<span class=""chip"">$($script:report.Meta.Date)</span><span class=""chip"">PC Toolkit $script:ToolkitVersion</span><span class=""chip"">$(T 'Check took {0} s' $script:report.Meta.DurationSeconds)</span>$adminChip"
-$heading = T 'PC health report: {0}' (ConvertTo-SafeHtml $env:COMPUTERNAME)
-if ($sparkollen) {
-    $themeFolder = Join-Path $PSScriptRoot 'themes'
-    $themeCss = [IO.File]::ReadAllText((Join-Path $themeFolder 'sparkollen.css'))
-    $svgDefs = [IO.File]::ReadAllText((Join-Path $themeFolder 'sparkollen-symbols.svg'))
-    $bodyClass = ' class="sparkollen"'
-    $trackPath = 'M0,41.3 L20,43.1 L40,44.6 L60,45.7 L80,46.5 L100,46.9 L120,47 L140,46.6 L160,45.8 L180,44.6 L200,43.2 L220,41.4 L240,39.4 L260,37.3 L280,35 L300,32.7 L320,30.5 L340,28.4 L360,26.4 L380,24.7 L400,23.2 L420,22.1 L440,21.4 L460,21 L480,21.1 L500,21.5 L520,22.4 L540,23.6 L560,25.1 L580,26.9 L600,28.9 L620,31 L640,33.3 L660,35.6 L680,37.8 L700,39.9 L720,41.9 L740,43.6 L760,45 L780,46 L800,46.7 L820,47 L840,46.9 L860,46.4 L880,45.5 L900,44.2 L920,42.7 L940,40.9 L960,38.8 L980,36.6 L1000,34.4'
-    # Paw prints follow the track curve (y = 34 + 13 sin(...)) in the 60 px high track band, alternating left and right foot.
-    $paws = for ($i = 0; $i -lt 10; $i++) {
-        $percent = 4 + $i * 7
-        $y = 34 + 13 * [math]::Sin($percent * 10 / 1000 * 2 * [math]::PI * 1.4 + 0.6)
-        $bottom = [math]::Round(56 + 60 - $y - 7 + $(if ($i % 2) { 5 } else { -5 }))
-        "<svg class=""paw"" aria-hidden=""true"" style=""left:$percent%;bottom:${bottom}px""><use href=""#paw""/></svg>"
+    $sortedFindings = @($findings | Sort-Object { $severityOrder[$_.Severity] })
+    $problemFindings = @($sortedFindings | Where-Object Severity -ne 'OK')
+    if ($sparkollen) {
+        $phaseDogs = @{ A = 'dog-tracker'; C = 'dog-guard' }
+        $findingHtml = @()
+        foreach ($key in $script:trialPhases.Keys) {
+            $phase = $script:trialPhases[$key]
+            $phaseFindings = @($problemFindings | Where-Object { $_.Category -in $phase.Categories })
+            $dog = if ($phaseDogs[$key]) { "<svg class=""dog-mini"" aria-hidden=""true""><use href=""#$($phaseDogs[$key])""/></svg>" } else { '' }
+            $findingHtml += "<h3 class=""phase-head""><span class=""ph-letter"">$key</span>$(T $phase.Name)<span class=""hint"">$(T $phase.Covers)</span>$dog</h3>"
+            $findingHtml += if ($phaseFindings.Count) { $phaseFindings | ForEach-Object { ConvertTo-FindingHtml $_ } } else { "<p class=""clean"">$(T 'Clean track - nothing found here.')</p>" }
+        }
+        $knownCategories = @($script:trialPhases.Values | ForEach-Object { $_.Categories })
+        $findingHtml += @($problemFindings | Where-Object { $_.Category -notin $knownCategories } | ForEach-Object { ConvertTo-FindingHtml $_ })
+    } else {
+        $findingHtml = @($problemFindings | ForEach-Object { ConvertTo-FindingHtml $_ })
     }
-    $heroHtml = @"
+    $okFindings = @($sortedFindings | Where-Object Severity -eq 'OK')
+    if ($okFindings.Count) {
+        $findingHtml += "<details class=""sub""><summary>$(T 'Checks that passed') <span class=""count"">$($okFindings.Count)</span></summary><div class=""pad"">$(($okFindings | ForEach-Object { ConvertTo-FindingHtml $_ }) -join "`n")</div></details>"
+    }
+    if (-not $findingHtml.Count) { $findingHtml = @("<p class=""empty"">$(T 'No findings.')</p>") }
+
+    # Detail sections
+    $sections = @()
+    $navLinks = @("<a href=""#findings"">$(T 'Findings')</a>")
+    $sectionKeys = @($sectionTitles.Keys) + @($script:report.Keys | Where-Object { $_ -notin $sectionTitles.Keys -and $_ -notin 'Meta', 'Findings' })
+    foreach ($key in $sectionKeys) {
+        if (-not $script:report.Contains($key)) { continue }
+        $title = if ($sectionTitles.Contains($key)) { T $sectionTitles[$key] } else { ConvertTo-Label $key }
+        $body = if ($key -eq 'Volumes') { ConvertTo-VolumeHtml $script:report[$key] } else { ConvertTo-SectionBody $script:report[$key] }
+        $anchor = $key.ToLowerInvariant()
+        $navLinks += "<a href=""#$anchor"">$(ConvertTo-SafeHtml $title)</a>"
+        $sections += "<section id=""$anchor""><h2>$(ConvertTo-SafeHtml $title)</h2><div class=""card"">$body</div></section>"
+    }
+    if ($script:scriptErrors.Count) {
+        $navLinks += "<a href=""#script-errors"">$(T 'Incomplete checks')</a>"
+        $sections += "<section id=""script-errors""><h2>$(T 'Checks that could not be completed')</h2><div class=""card""><ul>" +
+            (($script:scriptErrors | ForEach-Object { "<li>$(ConvertTo-SafeHtml (ConvertTo-ThemeText $_))</li>" }) -join '') + '</ul></div></section>'
+    }
+
+    $navLinks = @($navLinks[0], "<a href=""#fix"">$(T 'Fix problems')</a>") + @($navLinks | Select-Object -Skip 1)
+    $driveMessage = if ($driveProblem) {
+        T 'A drive may be failing, so PC Toolkit will not change anything. Back up important files now and have the drive checked.'
+    } else {
+        T 'The drive health check could not be completed, so PC Toolkit will not change anything. Ask whoever is helping you.'
+    }
+    $fixData = [ordered]@{
+        options      = @(Get-RepairOptions (Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json))
+        driveBlocked = $driveBlocked
+        driveMessage = $driveMessage
+        theme        = $script:ToolkitTheme
+        strings      = Get-StringTable 'Fix'
+    }
+    $fixJson = ($fixData | ConvertTo-Json -Depth 4 -Compress).Replace('<', '\u003c').Replace('>', '\u003e').Replace('&', '\u0026')
+    $fixScript = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'report-fix.js'))
+
+    $adminChip = if ($isAdmin) { "<span class=""chip"">$(T 'Ran as administrator')</span>" } else { "<span class=""chip alert"">$(T 'Not run as administrator &ndash; some data may be missing')</span>" }
+    $driveBanner = if ($driveProblem) { "<div class=""banner"">$(T 'A drive may be failing. Back up important files before doing anything else.')</div>" } else { '' }
+    $modelText = ''
+    if ($system) {
+        $modelName = "$($system.Model)".Trim()
+        if ($system.Manufacturer -and $modelName -notlike "$($system.Manufacturer)*") { $modelName = "$($system.Manufacturer) $modelName" }
+        $modelText = ConvertTo-SafeHtml $modelName.Trim()
+    }
+
+    $themeOptions = foreach ($themeName in $themeReports.Keys) {
+        $selected = if ($themeName -eq $script:ToolkitTheme) { ' selected' } else { '' }
+        "<option value=""$($themeReports[$themeName])""$selected>$(ConvertTo-SafeHtml (Get-ThemeDisplayName $themeName))</option>"
+    }
+    $themePicker = "<label class=""theme-pick""><span>$(T 'Theme')</span><select id=""theme-select"" onchange=""switchTheme(this.value)"">$($themeOptions -join '')</select></label>"
+    $chips = "<span class=""chip"">$($script:report.Meta.Date)</span><span class=""chip"">PC Toolkit $script:ToolkitVersion</span><span class=""chip"">$(T 'Check took {0} s' $script:report.Meta.DurationSeconds)</span>$adminChip$themePicker"
+    $heading = T 'PC health report: {0}' (ConvertTo-SafeHtml $env:COMPUTERNAME)
+    if ($sparkollen) {
+        $themeFolder = Join-Path $PSScriptRoot 'themes'
+        $themeCss = [IO.File]::ReadAllText((Join-Path $themeFolder 'sparkollen.css'))
+        $svgDefs = [IO.File]::ReadAllText((Join-Path $themeFolder 'sparkollen-symbols.svg'))
+        $bodyClass = ' class="sparkollen"'
+        $trackPath = 'M0,41.3 L20,43.1 L40,44.6 L60,45.7 L80,46.5 L100,46.9 L120,47 L140,46.6 L160,45.8 L180,44.6 L200,43.2 L220,41.4 L240,39.4 L260,37.3 L280,35 L300,32.7 L320,30.5 L340,28.4 L360,26.4 L380,24.7 L400,23.2 L420,22.1 L440,21.4 L460,21 L480,21.1 L500,21.5 L520,22.4 L540,23.6 L560,25.1 L580,26.9 L600,28.9 L620,31 L640,33.3 L660,35.6 L680,37.8 L700,39.9 L720,41.9 L740,43.6 L760,45 L780,46 L800,46.7 L820,47 L840,46.9 L860,46.4 L880,45.5 L900,44.2 L920,42.7 L940,40.9 L960,38.8 L980,36.6 L1000,34.4'
+        # Paw prints follow the track curve (y = 34 + 13 sin(...)) in the 60 px high track band, alternating left and right foot.
+        $paws = for ($i = 0; $i -lt 10; $i++) {
+            $percent = 4 + $i * 7
+            $y = 34 + 13 * [math]::Sin($percent * 10 / 1000 * 2 * [math]::PI * 1.4 + 0.6)
+            $bottom = [math]::Round(56 + 60 - $y - 7 + $(if ($i % 2) { 5 } else { -5 }))
+            "<svg class=""paw"" aria-hidden=""true"" style=""left:$percent%;bottom:${bottom}px""><use href=""#paw""/></svg>"
+        }
+        $heroHtml = @"
 <header class="hero">
 <svg class="forest" aria-hidden="true" style="color:#163327;fill:currentColor"><use href="#forest-back"/></svg>
 <svg class="track" viewBox="0 0 1000 60" preserveAspectRatio="none" aria-hidden="true"><path d="$trackPath" fill="none" stroke="#ff922b" stroke-width="2.5" stroke-dasharray="7 8" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity=".75"/></svg>
@@ -1063,18 +1088,18 @@ $($paws -join '')
 <div class="meta">$chips</div>
 </div></header>
 "@
-} else {
-    $themeCss = ''; $svgDefs = ''; $bodyClass = ''
-    $heroHtml = @"
+    } else {
+        $themeCss = ''; $svgDefs = ''; $bodyClass = ''
+        $heroHtml = @"
 <header class="hero"><div class="wrap">
 <h1>$heading</h1>
 <div class="sub">$modelText</div>
 <div class="meta">$chips</div>
 </div></header>
 "@
-}
+    }
 
-$html = @"
+    $html = @"
 <!DOCTYPE html><html lang="$(if ($sparkollen) { 'sv' } else { 'en' })"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>$(T 'PC Toolkit report - {0}' (ConvertTo-SafeHtml $env:COMPUTERNAME))</title>
 <style>
@@ -1086,6 +1111,9 @@ header.hero{background:linear-gradient(135deg,#1e3a8a,#3b5bdb 60%,#7048e8);color
 .hero h1{margin:0;font-size:28px;font-weight:600}.hero .sub{opacity:.85;margin-top:2px}
 .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
 .chip{background:rgba(255,255,255,.16);border-radius:999px;padding:3px 12px;font-size:13px}.chip.alert{background:#ffd43b;color:#5c3c00}
+.theme-pick{margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:13px}
+.theme-pick select{font:inherit;font-size:13px;padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.35);background:rgba(0,0,0,.25);color:#fff;cursor:pointer}
+.theme-pick select:hover,.theme-pick select:focus{border-color:#fff}.theme-pick option{background:var(--card);color:var(--text)}
 .verdict{margin-top:-50px;background:var(--card);border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.45);padding:22px 26px;display:flex;gap:22px;align-items:center;flex-wrap:wrap;border-left:8px solid var(--ok)}
 .verdict.bad{border-left-color:var(--crit)}.verdict.warn{border-left-color:var(--warn)}
 .verdict h2{margin:0;font-size:23px}.verdict p{margin:4px 0 0;color:var(--muted);max-width:560px}
@@ -1159,7 +1187,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;min
 footer{margin:40px 0 30px;color:var(--muted);font-size:13px;text-align:center}
 @media (max-width:640px){.counts{margin-left:0}.verdict{padding:18px}.hero h1{font-size:23px}}
 @media print{:root{--bg:#fff;--card:#fff;--text:#000;--muted:#555;--border:#ccc}body{background:#fff;color:#000}header.hero{background:none;color:#000;padding:0 0 16px}.chip{border:1px solid #bbb}
-.verdict{margin-top:0;box-shadow:none;border:1px solid #ccc}nav.toc,.filter,#fix,a.cta{display:none}.card,.finding{box-shadow:none;break-inside:avoid}section{break-inside:avoid-page}}
+.verdict{margin-top:0;box-shadow:none;border:1px solid #ccc}nav.toc,.filter,#fix,a.cta,.theme-pick{display:none}.card,.finding{box-shadow:none;break-inside:avoid}section{break-inside:avoid-page}}
 $themeCss
 </style></head><body$bodyClass>
 $svgDefs
@@ -1178,6 +1206,7 @@ $($sections -join "`n")
 </main>
 <script>
 function setAll(open){document.querySelectorAll('details').forEach(function(d){d.open=open})}
+function switchTheme(file){var base=window.PCTK?'/'+window.PCTK.token+'/':'';location.href=base+file+location.hash}
 window.addEventListener('beforeprint',function(){setAll(true)});
 document.querySelectorAll('.filter').forEach(function(input){input.addEventListener('input',function(){
 var q=input.value.toLowerCase();input.parentNode.querySelectorAll('tbody tr').forEach(function(r){r.style.display=r.textContent.toLowerCase().indexOf(q)>-1?'':'none'})})});
@@ -1188,7 +1217,13 @@ $fixScript
 </script>
 </body></html>
 "@
-Set-Content -LiteralPath $htmlPath -Value $html -Encoding UTF8
+    Set-Content -LiteralPath $Path -Value $html -Encoding UTF8
+}
+
+foreach ($themeName in $themeReports.Keys) { Write-HtmlReport $themeName (Join-Path $outputFolder $themeReports[$themeName]) }
+Set-ToolkitTheme $runTheme
+$sparkollen = $runTheme -eq 'Sparkollen'
+$driveProblem = [bool]$script:report.Drives.DriveProblem
 
 Write-Section (T 'Summary of findings')
 $colors = @{ Critical = 'Red'; Warning = 'Yellow'; Info = 'Cyan'; OK = 'Green' }

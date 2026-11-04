@@ -164,7 +164,7 @@ try {
         if ($script:data.Drives.DriveProblem) {
             $script:stopReason = T 'A drive may be failing. No repairs were run.'
             Write-Host ("`n" + (T '!!! A DRIVE MAY BE FAILING !!!')) -ForegroundColor Red
-            Write-Host $driveFinding.Details -ForegroundColor Red
+            if ($driveFinding) { Write-Host (Get-FindingText $driveFinding 'Details') -ForegroundColor Red }
             Write-Host (T 'No repairs will run because intensive operations can make a failing drive stop working.') -ForegroundColor Yellow
             Write-Host (T '1. Back up important files (Documents, Pictures, Desktop, game saves) to an external drive or cloud storage now.') -ForegroundColor Yellow
             Write-Host (T '2. Replace the drive, ideally by cloning it to a new SSD.') -ForegroundColor Yellow
@@ -425,7 +425,7 @@ try {
     }
 
     foreach ($finding in @($script:data.Findings | Where-Object { $_.Action -eq 'Manual' -and $_.Recommendation })) {
-        $script:manual.Add("$($finding.Title): $($finding.Recommendation)")
+        $script:manual.Add("$(Get-FindingText $finding 'Title'): $(Get-FindingText $finding 'Recommendation')")
     }
     $script:reachedEnd = $true
 } finally {
