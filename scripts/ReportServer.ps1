@@ -40,9 +40,15 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common.ps1')
 
 $jsonPath = Join-Path $ReportFolder 'diagnostic-report.json'
-$htmlPath = Join-Path $ReportFolder 'diagnostic-report.html'
 $data = Get-Content -LiteralPath $jsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
 Set-ToolkitTheme $(if ($data.Meta.Theme) { $data.Meta.Theme } else { 'Sparkollen' })
+# Theme versions of the report the dropdown may switch between: theme name -> file name in the report folder.
+$themePages = @{}
+if ($data.Meta.ThemeReports) {
+    foreach ($property in $data.Meta.ThemeReports.PSObject.Properties) {
+        if ($script:Themes -contains $property.Name -and "$($property.Value)" -match '^diagnostic-report(-[a-z]+)?\.html$') { $themePages[$property.Name] = "$($property.Value)" }
+    }
+}
 $allowedOptions = @(Get-RepairOptions $data | ForEach-Object { $_.Id })
 $isAdmin = Test-IsAdmin
 $driveBlocked = [bool]$data.Drives.DriveProblem -or -not [bool]$data.Drives.CheckCompleted
@@ -112,7 +118,15 @@ function Start-Repair($Context, $Body) {
     if (-not $isAdmin -and -not $DryRun) { return Send-Json $Context 403 @{ Error = (T 'PC Toolkit does not have administrator permission. Close it, start it again and click Yes when Windows asks.') } }
     if ($script:repair -and -not $script:repair.Process.HasExited) { return Send-Json $Context 409 @{ Error = (T 'A repair is already running.') } }
     $requested = @()
-    try { $requested = @(($Body | ConvertFrom-Json).Options | ForEach-Object { "$_" }) } catch { }
+    $repairTheme = $script:ToolkitTheme
+    try {
+        $parsed = $Body | ConvertFrom-Json
+        $requested = @($parsed.Options | ForEach-Object { "$_" })
+        if ($parsed.Theme) {
+            if ($script:Themes -cnotcontains "$($parsed.Theme)") { return Send-Json $Context 400 @{ Error = (T 'Invalid selection.') } }
+            $repairTheme = "$($parsed.Theme)"
+        }
+    } catch { }
     $requested = @($requested | Select-Object -Unique)
     $invalid = @($requested | Where-Object { $allowedOptions -notcontains $_ })
     if (-not $requested.Count -or $invalid.Count) { return Send-Json $Context 400 @{ Error = (T 'Invalid selection.') } }
@@ -125,7 +139,7 @@ function Start-Repair($Context, $Body) {
     Set-Content -LiteralPath $progressPath -Value '' -Encoding UTF8
     $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $PSScriptRoot 'Repair.ps1')`"",
         '-ReportPath', "`"$jsonPath`"", '-SelectionPath', "`"$selectionPath`"",
-        '-ProgressPath', "`"$progressPath`"", '-ResultPath', "`"$resultPath`"")
+        '-ProgressPath', "`"$progressPath`"", '-ResultPath', "`"$resultPath`"", '-Theme', $repairTheme)
     if ($DryRun) { $arguments += '-WhatIf', '-NoElevation' }
     $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
         -ArgumentList ($arguments -join ' ') -WindowStyle Hidden -PassThru
@@ -143,12 +157,15 @@ function Invoke-Request($Context) {
     if ($request.Headers['Host'] -ne "127.0.0.1:$Port") { return Send-Json $Context 403 @{ Error = (T 'Forbidden') } }
 
     if ($request.HttpMethod -eq 'GET') {
+        $pageFile = $null
+        if ($path -eq '') { $pageFile = 'diagnostic-report.html' }
+        elseif ($themePages.Values -ccontains $path) { $pageFile = $path }
+        if ($pageFile) {
+            $page = [System.IO.File]::ReadAllText((Join-Path $ReportFolder $pageFile), [System.Text.Encoding]::UTF8)
+            $config = "<script>window.PCTK={token:'$Token',dryRun:$("$([bool]$DryRun)".ToLower()),admin:$("$isAdmin".ToLower())};</script>"
+            return Send-Response $Context 200 $page.Replace('</head>', "$config</head>") 'text/html; charset=utf-8'
+        }
         switch ($path) {
-            '' {
-                $page = [System.IO.File]::ReadAllText($htmlPath, [System.Text.Encoding]::UTF8)
-                $config = "<script>window.PCTK={token:'$Token',dryRun:$("$([bool]$DryRun)".ToLower()),admin:$("$isAdmin".ToLower())};</script>"
-                return Send-Response $Context 200 $page.Replace('</head>', "$config</head>") 'text/html; charset=utf-8'
-            }
             'status' { return Send-Json $Context 200 (Get-RepairStatus) }
             default { return Send-Json $Context 404 @{ Error = (T 'Not found') } }
         }

@@ -62,7 +62,7 @@ function renderForm(){
 
 function start(){var s=selected();if(!s.length)return;
  if(!confirm(t('Fix the {0} selected item(s) now?',s.length)+'\n\n'+t('A restore point is created first. Close games and save your work.')))return;
- api('POST','repair',{Options:s}).then(function(){showProgress();poll()}).catch(function(e){alert(e.message)})}
+ api('POST','repair',{Options:s,Theme:data.theme}).then(function(){showProgress();poll()}).catch(function(e){alert(e.message)})}
 
 function showProgress(){panel.innerHTML='';var h=el('div','progress-head');h.appendChild(el('span','spinner'));
  stateEl=el('strong',null,t('Fixing problems...'));h.appendChild(stateEl);panel.appendChild(h);
