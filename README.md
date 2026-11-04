@@ -5,7 +5,7 @@ Finds out why a Windows computer is slow and fixes what can be fixed safely, wit
 ## Snabbstart 🐾
 
 1. **Dubbelklicka på `Starta Spårkollen.cmd`.**
-   - Klicka **Ja** när Windows frågar om appen får göra ändringar.
+   - Läs texten i det svarta fönstret och tryck **Enter**. Klicka sedan **Ja** när Windows frågar om appen får göra ändringar.
    - Visar Windows en varning (till exempel *"Windows skyddade datorn"* eller *"Okänd utgivare"*)? Klicka inte förbi den själv – hör av dig till John först.
    - Datorn går spåret i 2–6 minuter. Ingenting ändras under tiden. Sedan öppnas domarprotokollet i webbläsaren.
 2. **Läs domarprotokollet.** Datorn får poäng i tre moment – *Spår* (hårddisk, minne, prestanda), *Lydnad* (Windows, uppstart, inställningar) och *Skydd* (säkerhet, program, hårdvara) – precis som på ett IGP-prov, max 300 poäng.
@@ -23,7 +23,7 @@ Vill du se rapporten utan hundtema och på engelska? Välj *Classic (English)* i
 1. **Download:** only use the link you got directly from the person helping you. Click the green **Code** button on that repository page → **Download ZIP**. Open the ZIP file and choose **Extract all**.
    (Or clone it with git if you know how.)
 2. **Double-click `Starta Spårkollen.cmd`.**
-   - Click **Yes** when Windows asks whether to allow changes. You do not need to open PowerShell or "Run as administrator" yourself.
+   - Read the short instructions in the black window and press **Enter**. Then click **Yes** when Windows asks whether to allow changes. You do not need to open PowerShell or "Run as administrator" yourself.
    - Windows may show a warning such as *"Windows protected your PC"*, *"Unknown publisher"* or *"Do you want to run this file?"*. **Do not click past it on your own.** See [If Windows shows a security warning](#if-windows-shows-a-security-warning) below.
    - The check takes 2–6 minutes and changes nothing. The report then opens in your web browser.
 3. **In the report, go to *Fix problems*** (*Ta spåret* in the Swedish theme). The recommended fixes are already ticked. Tick or untick what you want and click **Fix selected**.
