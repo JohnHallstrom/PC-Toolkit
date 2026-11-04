@@ -1,6 +1,44 @@
 ﻿$script:ToolkitVersion = '1.2'
 $script:ToolkitRoot = Split-Path -Parent $PSScriptRoot
 $script:ReportsRoot = Join-Path $script:ToolkitRoot 'Reports'
+$script:Themes = @('Sparkollen', 'Neutral')
+$script:ToolkitTheme = 'Neutral'
+$script:Strings = @{}
+$script:MissingStrings = New-Object System.Collections.Generic.HashSet[string]
+
+# Sparkollen = Swedish dog-sport theme (default), Neutral = plain English. Translations live in lang\sv\*.psd1,
+# keyed by the English text (with {0} placeholders), so a missing translation falls back to English.
+function Set-ToolkitTheme([string]$Theme) {
+    if ($script:Themes -notcontains $Theme) { $Theme = 'Sparkollen' }
+    $script:ToolkitTheme = $Theme
+    $script:Strings = @{}
+    if ($Theme -eq 'Sparkollen') {
+        foreach ($file in Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'lang\sv') -Filter '*.psd1' -ErrorAction SilentlyContinue) {
+            $table = Import-PowerShellDataFile -LiteralPath $file.FullName
+            foreach ($key in $table.Keys) { $script:Strings[$key] = $table[$key] }
+        }
+    }
+}
+
+function Get-StringTable([string]$Name) {
+    $path = Join-Path $PSScriptRoot "lang\sv\$Name.psd1"
+    if ($script:ToolkitTheme -eq 'Sparkollen' -and (Test-Path -LiteralPath $path)) { Import-PowerShellDataFile -LiteralPath $path } else { @{} }
+}
+
+# Translates English text for the active theme. Extra arguments fill {0}, {1}, ...
+function T([string]$Text) {
+    $template = $Text
+    if ($script:ToolkitTheme -eq 'Sparkollen' -and $Text) {
+        if ($script:Strings.ContainsKey($Text)) { $template = $script:Strings[$Text] } else { [void]$script:MissingStrings.Add($Text) }
+    }
+    if ($args.Count) { $template -f $args } else { $template }
+}
+
+# Translates a display value (status, health, category...) when a translation exists; other values are shown as-is.
+function Tv($Value) {
+    $text = "$Value"
+    if ($script:ToolkitTheme -eq 'Sparkollen' -and $script:Strings.ContainsKey($text)) { $script:Strings[$text] } else { $text }
+}
 
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -34,14 +72,15 @@ function Write-Section([string]$Text) {
 
 function Read-YesNo {
     param([string]$Question, [bool]$Default = $false)
-    $hint = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    $yes = T 'y'; $no = T 'n'
+    $hint = if ($Default) { "[$($yes.ToUpper())/$no]" } else { "[$yes/$($no.ToUpper())]" }
     while ($true) {
         $answer = Read-Host "$Question $hint"
         if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
         switch ($answer.Trim().ToLowerInvariant()) {
-            { $_ -in 'y', 'yes' } { return $true }
-            { $_ -in 'n', 'no' } { return $false }
-            default { Write-Host 'Please answer y (yes) or n (no).' -ForegroundColor Yellow }
+            { $_ -in 'y', 'yes', 'j', 'ja' } { return $true }
+            { $_ -in 'n', 'no', 'nej' } { return $false }
+            default { Write-Host (T 'Please answer y (yes) or n (no).') -ForegroundColor Yellow }
         }
     }
 }
@@ -78,10 +117,10 @@ function Get-FolderSizeGB([string]$Path) {
 
 function Get-CleanableFolders {
     @(
-        [pscustomobject]@{ Name = 'User temporary files'; Path = $env:TEMP }
-        [pscustomobject]@{ Name = 'Windows temporary files'; Path = "$env:SystemRoot\Temp" }
-        [pscustomobject]@{ Name = 'Windows Update download cache'; Path = "$env:SystemRoot\SoftwareDistribution\Download" }
-        [pscustomobject]@{ Name = 'Delivery Optimization cache'; Path = "$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache" }
+        [pscustomobject]@{ Name = (T 'User temporary files'); Path = $env:TEMP }
+        [pscustomobject]@{ Name = (T 'Windows temporary files'); Path = "$env:SystemRoot\Temp" }
+        [pscustomobject]@{ Name = (T 'Windows Update download cache'); Path = "$env:SystemRoot\SoftwareDistribution\Download" }
+        [pscustomobject]@{ Name = (T 'Delivery Optimization cache'); Path = "$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache" }
     )
 }
 
@@ -199,7 +238,7 @@ function Get-UnwantedPrograms($Programs) {
                 [pscustomobject]@{
                     Name = $program.Name
                     Publisher = $program.Publisher
-                    Reason = $pattern.Reason
+                    Reason = (T $pattern.Reason)
                     UninstallCommand = $program.UninstallCommand
                 }
                 break
@@ -218,50 +257,50 @@ function Get-RepairOptions($Data) {
         $options.Add([pscustomobject]@{ Id = $Id; Group = $Group; Title = $Title; Description = $Description; Default = $Default; Duration = $Duration; Automatic = $Automatic; Tag = $Tag })
     }
     $cleanableGB = [math]::Round((@($Data.Cleanable.Folders) | Where-Object { $_ } | Measure-Object SizeGB -Sum).Sum, 1)
-    $sizeText = if ($cleanableGB -gt 0) { " About $cleanableGB GB found." } else { '' }
-    Add-Option 'cleanup' 'recommended' 'Clean temporary files and caches' "Removes temporary files older than one day, the Windows Update download cache and superseded Windows components.$sizeText" $true '2-10 min' $true
+    $sizeText = if ($cleanableGB -gt 0) { ' ' + (T 'About {0} GB found.' $cleanableGB) } else { '' }
+    Add-Option 'cleanup' 'recommended' (T 'Clean temporary files and caches') ((T 'Removes temporary files older than one day, the Windows Update download cache and superseded Windows components.') + $sizeText) $true '2-10 min' $true
     if (Test-ReportFinding $Data 'STORAGE_SENSE_DISABLED') {
-        Add-Option 'storage-sense' 'recommended' 'Turn on Storage Sense' 'Windows then cleans temporary files automatically in the future.' $true 'Seconds' $true
+        Add-Option 'storage-sense' 'recommended' (T 'Turn on Storage Sense') (T 'Windows then cleans temporary files automatically in the future.') $true (T 'Seconds') $true
     }
     if (Test-ReportFinding $Data 'POWER_SAVER') {
-        Add-Option 'power-plan' 'recommended' 'Switch power plan to Balanced' 'Power Saver limits processor speed.' $true 'Seconds' $true
+        Add-Option 'power-plan' 'recommended' (T 'Switch power plan to Balanced') (T 'Power Saver limits processor speed.') $true (T 'Seconds') $true
     }
     if (Test-ReportFinding $Data 'TRIM_DISABLED') {
-        Add-Option 'trim-enable' 'recommended' 'Turn on TRIM for SSDs' 'Keeps SSDs fast over time.' $true 'Seconds' $true
+        Add-Option 'trim-enable' 'recommended' (T 'Turn on TRIM for SSDs') (T 'Keeps SSDs fast over time.') $true (T 'Seconds') $true
     }
     if (@($Data.Volumes | Where-Object { $_ -and $_.MediaType -eq 'SSD' }).Count) {
-        Add-Option 'retrim' 'recommended' 'Optimize SSDs (TRIM)' 'Tells the SSD which space is free. Safe and quick.' $true '1 min' $true
+        Add-Option 'retrim' 'recommended' (T 'Optimize SSDs (TRIM)') (T 'Tells the SSD which space is free. Safe and quick.') $true '1 min' $true
     }
     if ($Data.Security.DefenderActive) {
-        Add-Option 'quick-scan' 'recommended' 'Update Microsoft Defender and run a quick virus scan' 'Checks the most common places for malware.' $true '5-15 min' $true
+        Add-Option 'quick-scan' 'recommended' (T 'Update Microsoft Defender and run a quick virus scan') (T 'Checks the most common places for malware.') $true '5-15 min' $true
     }
     $repairRecommended = (Test-ReportFinding $Data 'LOW_STABILITY') -or (Test-ReportFinding $Data 'WINDOWS_UPDATE_OLD')
     $repairGroup = if ($repairRecommended) { 'recommended' } else { 'extra' }
-    $repairText = if ($repairRecommended) { 'The check found signs that Windows files may be damaged. Repairs them with DISM and SFC.' } else { 'No signs of damaged Windows files were found, but you can check anyway with DISM and SFC.' }
-    Add-Option 'windows-repair' $repairGroup 'Repair Windows system files' $repairText $repairRecommended '15-40 min' $true
+    $repairText = if ($repairRecommended) { T 'The check found signs that Windows files may be damaged. Repairs them with DISM and SFC.' } else { T 'No signs of damaged Windows files were found, but you can check anyway with DISM and SFC.' }
+    Add-Option 'windows-repair' $repairGroup (T 'Repair Windows system files') $repairText $repairRecommended '15-40 min' $true
     if ((Test-ReportFinding $Data 'UPDATES_PENDING') -or (Test-ReportFinding $Data 'WINDOWS_UPDATE_OLD')) {
-        Add-Option 'windows-update' 'recommended' 'Start Windows Update' 'Searches for and installs updates in the background. Restart afterwards.' $true 'Runs in background' $true
+        Add-Option 'windows-update' 'recommended' (T 'Start Windows Update') (T 'Searches for and installs updates in the background. Restart afterwards.') $true (T 'Runs in background') $true
     }
     if (Test-ReportFinding $Data 'PAGE_FILE_OFF') {
-        Add-Option 'page-file' 'recommended' 'Let Windows manage the page file' 'A disabled page file can cause crashes and slowdowns in games. Takes effect after a restart.' $true 'Seconds'
+        Add-Option 'page-file' 'recommended' (T 'Let Windows manage the page file') (T 'A disabled page file can cause crashes and slowdowns in games. Takes effect after a restart.') $true (T 'Seconds')
     }
     foreach ($entry in @($Data.Startup.Entries | Where-Object { $_ -and $_.Enabled })) {
         Add-Option "startup:$($entry.Name)" 'startup' $entry.Name $entry.Command ($entry.Suggestion -eq 'Can be disabled') '' $false $entry.Suggestion
     }
     foreach ($program in @($Data.Programs.Unwanted | Where-Object { $_ })) {
-        Add-Option "uninstall:$($program.Name)" 'programs' "Uninstall $($program.Name)" $program.Reason $true 'Follow the uninstaller'
+        Add-Option "uninstall:$($program.Name)" 'programs' (T 'Uninstall {0}' $program.Name) $program.Reason $true (T 'Follow the uninstaller')
     }
     if ($Data.Cleanable.RecycleBinGB -ge 0.1) {
-        Add-Option 'recycle-bin' 'extra' 'Empty the Recycle Bin' "Contains about $($Data.Cleanable.RecycleBinGB) GB. Deleted files cannot be restored afterwards." $false 'Seconds'
+        Add-Option 'recycle-bin' 'extra' (T 'Empty the Recycle Bin') (T 'Contains about {0} GB. Deleted files cannot be restored afterwards.' $Data.Cleanable.RecycleBinGB) $false (T 'Seconds')
     }
     if ((Test-ReportFinding $Data 'LOW_SYSTEM_SPACE') -and $Data.Cleanable.HibernationFileGB -ge 4) {
-        Add-Option 'hibernation' 'extra' 'Turn off hibernation' "Frees $($Data.Cleanable.HibernationFileGB) GB. Also turns off Fast Startup." $false 'Seconds'
+        Add-Option 'hibernation' 'extra' (T 'Turn off hibernation') (T 'Frees {0} GB. Also turns off Fast Startup.' $Data.Cleanable.HibernationFileGB) $false (T 'Seconds')
     }
     if ($Data.Security.DefenderActive) {
-        Add-Option 'full-scan' 'extra' 'Run a full virus scan' 'Scans every file. The computer can be used meanwhile but may be slower.' $false '1-3 hours'
+        Add-Option 'full-scan' 'extra' (T 'Run a full virus scan') (T 'Scans every file. The computer can be used meanwhile but may be slower.') $false (T '1-3 hours')
     }
     foreach ($volume in @($Data.Volumes | Where-Object { $_ -and $_.MediaType -eq 'HDD' })) {
-        Add-Option "defrag:$($volume.Drive)" 'extra' "Defragment $($volume.Drive)" 'Can speed up a mechanical hard drive. Do not use the computer meanwhile.' $false '30 min - several hours'
+        Add-Option "defrag:$($volume.Drive)" 'extra' (T 'Defragment {0}' $volume.Drive) (T 'Can speed up a mechanical hard drive. Do not use the computer meanwhile.') $false (T '30 min - several hours')
     }
     $options
 }
