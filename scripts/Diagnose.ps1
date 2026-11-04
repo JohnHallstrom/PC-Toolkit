@@ -19,6 +19,9 @@
 
 .PARAMETER NoBrowser
     Start the report server without opening the web browser.
+
+.PARAMETER Theme
+    Sparkollen (default): Swedish texts and a dog-sport themed report. Neutral: plain English report.
 #>
 [CmdletBinding()]
 param(
@@ -26,21 +29,24 @@ param(
     [switch]$NoElevation,
     [switch]$Quiet,
     [switch]$DryRunRepairs,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [ValidateSet('Sparkollen', 'Neutral')][string]$Theme = 'Sparkollen'
 )
 
 $WhatIfPreference = $false
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'Common.ps1')
+Set-ToolkitTheme $Theme
+$sparkollen = $script:ToolkitTheme -eq 'Sparkollen'
 
 if (-not (Test-IsAdmin) -and -not $NoElevation) {
     try {
-        Write-Host 'Restarting with administrator permissions...'
+        Write-Host (T 'Restarting with administrator permissions...')
         Start-AsAdmin -ScriptPath $PSCommandPath -Parameters $PSBoundParameters
         return
     } catch {
-        Write-Warning 'Administrator permission was not granted. Some checks may be incomplete.'
+        Write-Warning (T 'Administrator permission was not granted. Some checks may be incomplete.')
     }
 }
 
@@ -78,7 +84,7 @@ function Invoke-Check([string]$Name, [scriptblock]$Code) {
     Write-Host ("[{0,2}/11] {1}..." -f $script:stepNumber, $Name) -ForegroundColor Cyan
     try { & $Code } catch {
         $script:scriptErrors.Add("$Name`: $($_.Exception.Message)")
-        Write-Warning "Could not complete '$Name': $($_.Exception.Message)"
+        Write-Warning (T "Could not complete '{0}': {1}" $Name $_.Exception.Message)
     }
 }
 
@@ -89,11 +95,11 @@ function Get-EventData($Event) {
 }
 
 $script:stepNumber = 0
-Write-Section "PC Toolkit $script:ToolkitVersion - Diagnosis of $env:COMPUTERNAME"
-if (-not $isAdmin) { Write-Warning 'Running without administrator permissions; drive health and some logs may be unavailable.' }
-Write-Host 'Tip: run this when the computer feels slow, for example just after startup.' -ForegroundColor DarkGray
+Write-Section (T 'PC Toolkit {0} - Diagnosis of {1}' $script:ToolkitVersion $env:COMPUTERNAME)
+if (-not $isAdmin) { Write-Warning (T 'Running without administrator permissions; drive health and some logs may be unavailable.') }
+Write-Host (T 'Tip: run this when the computer feels slow, for example just after startup.') -ForegroundColor DarkGray
 
-Invoke-Check 'System information' {
+Invoke-Check (T 'System information') {
     $os = Get-CimInstance Win32_OperatingSystem
     $computer = Get-CimInstance Win32_ComputerSystem
     $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -124,17 +130,17 @@ Invoke-Check 'System information' {
         RebootPending = [bool]$rebootPending
     }
     if ($uptime.TotalDays -gt 7) {
-        Add-Finding -Id 'UPTIME_LONG' -Severity Warning -Category System -Title "The computer has not restarted for $([int]$uptime.TotalDays) days" `
-            -Details "Last restart: $($script:report.System.LastBoot)." `
-            -Recommendation 'Restart the computer (choose Restart, not Shut down).' -Action Ask
+        Add-Finding -Id 'UPTIME_LONG' -Severity Warning -Category System -Title (T 'The computer has not restarted for {0} days' ([int]$uptime.TotalDays)) `
+            -Details (T 'Last restart: {0}.' $script:report.System.LastBoot) `
+            -Recommendation (T 'Restart the computer (choose Restart, not Shut down).') -Action Ask
     }
     if ($rebootPending) {
-        Add-Finding -Id 'REBOOT_PENDING' -Severity Warning -Category System -Title 'A restart is pending to finish updates' `
-            -Recommendation 'Restart the computer.' -Action Ask
+        Add-Finding -Id 'REBOOT_PENDING' -Severity Warning -Category System -Title (T 'A restart is pending to finish updates') `
+            -Recommendation (T 'Restart the computer.') -Action Ask
     }
 }
 
-Invoke-Check 'Physical drives and drive health' {
+Invoke-Check (T 'Physical drives and drive health') {
     $systemLetter = $env:SystemDrive.Substring(0, 1)
     $systemDiskNumber = $null
     try { $systemDiskNumber = "$((Get-Partition -DriveLetter $systemLetter -ErrorAction Stop).DiskNumber)" } catch {}
@@ -176,56 +182,56 @@ Invoke-Check 'Physical drives and drive health' {
     foreach ($drive in $physicalDrives) {
         if ($drive.Health -notin 'Healthy', 'Unknown', '') {
             $driveProblem = $true
-            $problemDetails += "$($drive.Name) reports health '$($drive.Health)'."
+            $problemDetails += T "{0} reports health '{1}'." $drive.Name $drive.Health
         }
         if ($drive.UncorrectableReadErrors -gt 0 -or $drive.UncorrectableWriteErrors -gt 0) {
             $driveProblem = $true
-            $problemDetails += "$($drive.Name) has uncorrectable read or write errors."
+            $problemDetails += T '{0} has uncorrectable read or write errors.' $drive.Name
         }
         if ($drive.WearPercent -ge 90) {
             $driveProblem = $true
-            $problemDetails += "$($drive.Name) reports $($drive.WearPercent)% wear."
+            $problemDetails += T '{0} reports {1}% wear.' $drive.Name $drive.WearPercent
         } elseif ($drive.WearPercent -ge 70) {
-            Add-Finding -Id 'DRIVE_WEAR' -Severity Warning -Category Drive -Title "$($drive.Name) reports $($drive.WearPercent)% wear" `
-                -Recommendation 'Plan to replace the drive and keep a current backup.' -Action Manual
+            Add-Finding -Id 'DRIVE_WEAR' -Severity Warning -Category Drive -Title (T '{0} reports {1}% wear' $drive.Name $drive.WearPercent) `
+                -Recommendation (T 'Plan to replace the drive and keep a current backup.') -Action Manual
         }
         if ($drive.TemperatureC -ge 70) {
-            Add-Finding -Id 'DRIVE_HOT' -Severity Warning -Category Drive -Title "$($drive.Name) is hot ($($drive.TemperatureC) C)" `
-                -Recommendation 'Check the computer airflow. NVMe drives may need a heatsink.' -Action Manual
+            Add-Finding -Id 'DRIVE_HOT' -Severity Warning -Category Drive -Title (T '{0} is hot ({1} C)' $drive.Name $drive.TemperatureC) `
+                -Recommendation (T 'Check the computer airflow. NVMe drives may need a heatsink.') -Action Manual
         }
     }
     if ($smartWarnings.Count) {
         $driveProblem = $true
-        $problemDetails += 'SMART predicts that a drive may fail soon.'
+        $problemDetails += T 'SMART predicts that a drive may fail soon.'
     }
     if ($badBlocks) {
         $driveProblem = $true
-        $problemDetails += "The system log contains $badBlocks bad-block events (disk event 7)."
+        $problemDetails += T 'The system log contains {0} bad-block events (disk event 7).' $badBlocks
     }
     if ($driveEvents.Count -ge 10) {
         $driveProblem = $true
-        $problemDetails += "The system log contains $($driveEvents.Count) drive-related errors or warnings in the last 30 days."
+        $problemDetails += T 'The system log contains {0} drive-related errors or warnings in the last 30 days.' $driveEvents.Count
     }
     if ($driveProblem) {
-        Add-Finding -Id 'DRIVE_FAILING' -Severity Critical -Category Drive -Title 'A drive may be failing' `
+        Add-Finding -Id 'DRIVE_FAILING' -Severity Critical -Category Drive -Title (T 'A drive may be failing') `
             -Details ($problemDetails -join ' ') `
-            -Recommendation 'BACK UP IMPORTANT FILES NOW (Documents, Pictures, Desktop, game saves). Do not run intensive repairs first. Replace the drive, ideally by cloning it to a new SSD.' `
+            -Recommendation (T 'BACK UP IMPORTANT FILES NOW (Documents, Pictures, Desktop, game saves). Do not run intensive repairs first. Replace the drive, ideally by cloning it to a new SSD.') `
             -Action Manual
     } elseif ($driveEvents.Count) {
-        Add-Finding -Id 'DRIVE_WARNINGS' -Severity Warning -Category Drive -Title "$($driveEvents.Count) drive-related log events in the last 30 days" `
+        Add-Finding -Id 'DRIVE_WARNINGS' -Severity Warning -Category Drive -Title (T '{0} drive-related log events in the last 30 days' $driveEvents.Count) `
             -Details (($driveEvents | Group-Object ProviderName, Id | ForEach-Object { "$($_.Name): $($_.Count)" }) -join '; ') `
-            -Recommendation 'Check the drive with CrystalDiskInfo and keep a current backup.' -Action Manual
+            -Recommendation (T 'Check the drive with CrystalDiskInfo and keep a current backup.') -Action Manual
     }
     $systemDrive = $physicalDrives | Where-Object IsSystemDrive | Select-Object -First 1
     if ($systemDrive -and $systemDrive.MediaType -eq 'HDD') {
-        Add-Finding -Id 'SYSTEM_DRIVE_HDD' -Severity Critical -Category Drive -Title 'Windows is installed on a mechanical hard drive (HDD)' `
-            -Details "$($systemDrive.Name) ($($systemDrive.SizeGB) GB). This is a common cause of slow startup and app loading." `
-            -Recommendation 'Clone Windows to an SSD. This is often the single biggest performance improvement.' -Action Manual
+        Add-Finding -Id 'SYSTEM_DRIVE_HDD' -Severity Critical -Category Drive -Title (T 'Windows is installed on a mechanical hard drive (HDD)') `
+            -Details (T '{0} ({1} GB). This is a common cause of slow startup and app loading.' $systemDrive.Name $systemDrive.SizeGB) `
+            -Recommendation (T 'Clone Windows to an SSD. This is often the single biggest performance improvement.') -Action Manual
     } elseif ($systemDrive -and $systemDrive.MediaType -eq 'SSD' -and -not $driveProblem) {
-        Add-Finding -Id 'SYSTEM_DRIVE_OK' -Severity OK -Category Drive -Title "Windows is on a healthy $($systemDrive.BusType) SSD"
+        Add-Finding -Id 'SYSTEM_DRIVE_OK' -Severity OK -Category Drive -Title (T 'Windows is on a healthy {0} SSD' $systemDrive.BusType)
     } elseif (-not $systemDrive) {
-        Add-Finding -Id 'SYSTEM_DRIVE_UNKNOWN' -Severity Info -Category Drive -Title 'Could not identify the type of the Windows drive' `
-            -Recommendation 'Check the drive with CrystalDiskInfo.' -Action Manual
+        Add-Finding -Id 'SYSTEM_DRIVE_UNKNOWN' -Severity Info -Category Drive -Title (T 'Could not identify the type of the Windows drive') `
+            -Recommendation (T 'Check the drive with CrystalDiskInfo.') -Action Manual
     }
     $script:report.Drives = [ordered]@{
         DriveProblem = $driveProblem
@@ -238,7 +244,7 @@ Invoke-Check 'Physical drives and drive health' {
     }
 }
 
-Invoke-Check 'Free disk space and game libraries' {
+Invoke-Check (T 'Free disk space and game libraries') {
     $volumes = @()
     foreach ($volume in @(Get-Volume -ErrorAction Stop | Where-Object {
         $_.DriveLetter -and "$($_.DriveType)" -in 'Fixed', '3' -and $_.Size -gt 0
@@ -259,20 +265,20 @@ Invoke-Check 'Free disk space and game libraries' {
     $script:report.Volumes = $volumes
     $systemVolume = $volumes | Where-Object Drive -eq $env:SystemDrive | Select-Object -First 1
     if ($systemVolume) {
-        $details = "$($systemVolume.FreeGB) GB free of $($systemVolume.SizeGB) GB ($($systemVolume.FreePercent)%)."
+        $details = T '{0} GB free of {1} GB ({2}%).' $systemVolume.FreeGB $systemVolume.SizeGB $systemVolume.FreePercent
         if ($systemVolume.FreePercent -lt 10 -or $systemVolume.FreeGB -lt 15) {
-            Add-Finding -Id 'LOW_SYSTEM_SPACE' -Severity Critical -Category Drive -Title "Almost no space left on $($systemVolume.Drive)" `
-                -Details $details -Recommendation 'Clean temporary files and move or uninstall large games or apps.' -Action Automatic
+            Add-Finding -Id 'LOW_SYSTEM_SPACE' -Severity Critical -Category Drive -Title (T 'Almost no space left on {0}' $systemVolume.Drive) `
+                -Details $details -Recommendation (T 'Clean temporary files and move or uninstall large games or apps.') -Action Automatic
         } elseif ($systemVolume.FreePercent -lt 20 -or $systemVolume.FreeGB -lt 30) {
-            Add-Finding -Id 'LOW_SYSTEM_SPACE' -Severity Warning -Category Drive -Title "Low free space on $($systemVolume.Drive)" `
-                -Details $details -Recommendation 'Clean temporary files and consider moving games to another drive.' -Action Automatic
+            Add-Finding -Id 'LOW_SYSTEM_SPACE' -Severity Warning -Category Drive -Title (T 'Low free space on {0}' $systemVolume.Drive) `
+                -Details $details -Recommendation (T 'Clean temporary files and consider moving games to another drive.') -Action Automatic
         } else {
-            Add-Finding -Id 'SYSTEM_SPACE_OK' -Severity OK -Category Drive -Title "Plenty of free space on $($systemVolume.Drive)" -Details $details
+            Add-Finding -Id 'SYSTEM_SPACE_OK' -Severity OK -Category Drive -Title (T 'Plenty of free space on {0}' $systemVolume.Drive) -Details $details
         }
     }
     foreach ($volume in $volumes | Where-Object { $_.Drive -ne $env:SystemDrive -and $_.FreePercent -lt 5 }) {
-        Add-Finding -Id 'LOW_OTHER_SPACE' -Severity Info -Category Drive -Title "Almost no space left on $($volume.Drive)" `
-            -Details "$($volume.FreeGB) GB free of $($volume.SizeGB) GB." -Recommendation 'Review games and files on this drive.' -Action Manual
+        Add-Finding -Id 'LOW_OTHER_SPACE' -Severity Info -Category Drive -Title (T 'Almost no space left on {0}' $volume.Drive) `
+            -Details (T '{0} GB free of {1} GB.' $volume.FreeGB $volume.SizeGB) -Recommendation (T 'Review games and files on this drive.') -Action Manual
     }
     $gameLibraries = @()
     $steamPath = (Get-ItemProperty 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue).SteamPath
@@ -292,13 +298,13 @@ Invoke-Check 'Free disk space and game libraries' {
     })
     $gamesOnHdd = @($script:report.GameLibraries | Where-Object MediaType -eq 'HDD')
     if ($gamesOnHdd.Count) {
-        Add-Finding -Id 'GAMES_ON_HDD' -Severity Warning -Category Drive -Title 'Some Steam libraries are on a mechanical hard drive' `
+        Add-Finding -Id 'GAMES_ON_HDD' -Severity Warning -Category Drive -Title (T 'Some Steam libraries are on a mechanical hard drive') `
             -Details (($gamesOnHdd | ForEach-Object Path) -join '; ') `
-            -Recommendation 'Move frequently played games to an SSD (Steam: Settings > Storage > Move).' -Action Manual
+            -Recommendation (T 'Move frequently played games to an SSD (Steam: Settings > Storage > Move).') -Action Manual
     }
 }
 
-Invoke-Check 'Memory (RAM)' {
+Invoke-Check (T 'Memory (RAM)') {
     $os = Get-CimInstance Win32_OperatingSystem
     $computer = Get-CimInstance Win32_ComputerSystem
     $modules = @(Get-CimInstance Win32_PhysicalMemory)
@@ -325,30 +331,30 @@ Invoke-Check 'Memory (RAM)' {
         IsLaptop = $isLaptop
     }
     if ($totalGB -lt 8) {
-        Add-Finding -Id 'LOW_RAM' -Severity Critical -Category Memory -Title "Only $totalGB GB of RAM" -Recommendation 'Upgrade to at least 16 GB.' -Action Manual
+        Add-Finding -Id 'LOW_RAM' -Severity Critical -Category Memory -Title (T 'Only {0} GB of RAM' $totalGB) -Recommendation (T 'Upgrade to at least 16 GB.') -Action Manual
     } elseif ($totalGB -lt 16) {
-        Add-Finding -Id 'LOW_RAM' -Severity Warning -Category Memory -Title "$totalGB GB of RAM is limited for a gaming PC" -Recommendation 'Consider upgrading to 16–32 GB.' -Action Manual
+        Add-Finding -Id 'LOW_RAM' -Severity Warning -Category Memory -Title (T '{0} GB of RAM is limited for a gaming PC' $totalGB) -Recommendation (T 'Consider upgrading to 16–32 GB.') -Action Manual
     }
     if ($usedPercent -ge 85) {
-        Add-Finding -Id 'HIGH_RAM_USE' -Severity Warning -Category Memory -Title "$usedPercent% of memory is currently in use" `
-            -Recommendation 'Review the processes using the most memory and disable unnecessary startup apps.' -Action Ask
+        Add-Finding -Id 'HIGH_RAM_USE' -Severity Warning -Category Memory -Title (T '{0}% of memory is currently in use' $usedPercent) `
+            -Recommendation (T 'Review the processes using the most memory and disable unnecessary startup apps.') -Action Ask
     }
     if (-not $isLaptop -and (($memoryType -eq 'DDR4' -and $configuredSpeed -le 2400) -or ($memoryType -eq 'DDR5' -and $configuredSpeed -le 4800))) {
-        Add-Finding -Id 'XMP_OFF' -Severity Warning -Category Memory -Title "Memory is running at its base speed ($configuredSpeed MHz $memoryType)" `
-            -Details 'Gaming PCs often support faster memory, which may need to be enabled in BIOS (XMP/EXPO/DOCP).' `
-            -Recommendation 'Check the rated memory speed, then enable the matching XMP/EXPO/DOCP profile in BIOS.' -Action Manual
+        Add-Finding -Id 'XMP_OFF' -Severity Warning -Category Memory -Title (T 'Memory is running at its base speed ({0} MHz {1})' $configuredSpeed $memoryType) `
+            -Details (T 'Gaming PCs often support faster memory, which may need to be enabled in BIOS (XMP/EXPO/DOCP).') `
+            -Recommendation (T 'Check the rated memory speed, then enable the matching XMP/EXPO/DOCP profile in BIOS.') -Action Manual
     }
     if (-not $isLaptop -and $modules.Count -eq 1) {
-        Add-Finding -Id 'SINGLE_CHANNEL_RAM' -Severity Info -Category Memory -Title 'Only one memory module is installed' `
-            -Recommendation 'Two matched modules can provide higher memory bandwidth.' -Action Manual
+        Add-Finding -Id 'SINGLE_CHANNEL_RAM' -Severity Info -Category Memory -Title (T 'Only one memory module is installed') `
+            -Recommendation (T 'Two matched modules can provide higher memory bandwidth.') -Action Manual
     }
     if ($pageFiles.Count -eq 0 -and -not $computer.AutomaticManagedPagefile) {
-        Add-Finding -Id 'PAGE_FILE_OFF' -Severity Warning -Category Memory -Title 'The Windows page file appears to be disabled' `
-            -Recommendation 'Let Windows manage the page file automatically.' -Action Ask
+        Add-Finding -Id 'PAGE_FILE_OFF' -Severity Warning -Category Memory -Title (T 'The Windows page file appears to be disabled') `
+            -Recommendation (T 'Let Windows manage the page file automatically.') -Action Ask
     }
 }
 
-Invoke-Check 'Current CPU and disk activity (10 seconds)' {
+Invoke-Check (T 'Current CPU and disk activity (10 seconds)') {
     $previousCpu = @{}
     Get-Process | ForEach-Object { if ($_.CPU) { $previousCpu[$_.Id] = $_.CPU } }
     $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -374,18 +380,18 @@ Invoke-Check 'Current CPU and disk activity (10 seconds)' {
     $cpuAverage = if ($samples.Count) { [math]::Round(($samples | Measure-Object CPU -Average).Average, 0) } else { $null }
     $script:report.Activity = [ordered]@{ DiskActivePercent = $diskAverage; CPUPercent = $cpuAverage; ProcessCount = $processes.Count; TopCPU = $topCpu; TopMemory = $topMemory }
     if ($diskAverage -ge 80) {
-        Add-Finding -Id 'HIGH_DISK_ACTIVITY' -Severity Warning -Category Performance -Title "The disk was active $diskAverage% of the sample period" `
-            -Details 'If no large task was running, this may indicate a slow drive or heavy background activity.' `
-            -Recommendation 'In Task Manager, check which processes are using the disk.' -Action Manual
+        Add-Finding -Id 'HIGH_DISK_ACTIVITY' -Severity Warning -Category Performance -Title (T 'The disk was active {0}% of the sample period' $diskAverage) `
+            -Details (T 'If no large task was running, this may indicate a slow drive or heavy background activity.') `
+            -Recommendation (T 'In Task Manager, check which processes are using the disk.') -Action Manual
     }
     if ($cpuAverage -ge 70) {
-        Add-Finding -Id 'HIGH_CPU_ACTIVITY' -Severity Warning -Category Performance -Title "CPU usage averaged $cpuAverage% during the sample" `
-            -Details ('Top CPU processes: ' + (($topCpu | Select-Object -First 3 | ForEach-Object { "$($_.Process) ($($_.CPUPercent)%)" }) -join ', ')) `
-            -Recommendation 'Review the processes above. Unknown processes using high CPU may need investigation.' -Action Manual
+        Add-Finding -Id 'HIGH_CPU_ACTIVITY' -Severity Warning -Category Performance -Title (T 'CPU usage averaged {0}% during the sample' $cpuAverage) `
+            -Details (T 'Top CPU processes: {0}' (($topCpu | Select-Object -First 3 | ForEach-Object { "$($_.Process) ($($_.CPUPercent)%)" }) -join ', ')) `
+            -Recommendation (T 'Review the processes above. Unknown processes using high CPU may need investigation.') -Action Manual
     }
 }
 
-Invoke-Check 'Startup apps, scheduled tasks, and services' {
+Invoke-Check (T 'Startup apps, scheduled tasks, and services') {
     $entries = @(Get-StartupEntries)
     $enabledEntries = @($entries | Where-Object Enabled)
     $scheduledTasks = @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object {
@@ -409,16 +415,16 @@ Invoke-Check 'Startup apps, scheduled tasks, and services' {
     }
     $canDisable = @($enabledEntries | Where-Object Suggestion -eq 'Can be disabled')
     if ($enabledEntries.Count -ge 8 -or $canDisable.Count -ge 3) {
-        Add-Finding -Id 'MANY_STARTUP_APPS' -Severity Warning -Category Startup -Title "$($enabledEntries.Count) apps start with Windows" `
-            -Details ('Likely candidates to disable: ' + $(if ($canDisable) { $canDisable.Name -join ', ' } else { 'None identified' })) `
-            -Recommendation 'Disable apps that are not needed immediately after sign-in. They still work when opened manually.' -Action Ask
+        Add-Finding -Id 'MANY_STARTUP_APPS' -Severity Warning -Category Startup -Title (T '{0} apps start with Windows' $enabledEntries.Count) `
+            -Details (T 'Likely candidates to disable: {0}' $(if ($canDisable) { $canDisable.Name -join ', ' } else { T 'None identified' })) `
+            -Recommendation (T 'Disable apps that are not needed immediately after sign-in. They still work when opened manually.') -Action Ask
     } elseif ($canDisable.Count) {
-        Add-Finding -Id 'STARTUP_APPS' -Severity Info -Category Startup -Title "$($canDisable.Count) startup apps may be optional" `
+        Add-Finding -Id 'STARTUP_APPS' -Severity Info -Category Startup -Title (T '{0} startup apps may be optional' $canDisable.Count) `
             -Details ($canDisable.Name -join ', ') -Action Ask
     }
 }
 
-Invoke-Check 'Windows startup times' {
+Invoke-Check (T 'Windows startup times') {
     $logName = 'Microsoft-Windows-Diagnostics-Performance/Operational'
     $starts = @(Get-WinEvent -FilterHashtable @{ LogName = $logName; Id = 100 } -MaxEvents 5 -ErrorAction SilentlyContinue | ForEach-Object {
         $eventData = Get-EventData $_
@@ -442,16 +448,16 @@ Invoke-Check 'Windows startup times' {
         $script:report.Boot.AverageSeconds = $average
         if ($average -ge 90) {
             $severity = if ($average -ge 180) { 'Critical' } else { 'Warning' }
-            Add-Finding -Id 'SLOW_STARTUP' -Severity $severity -Category Startup -Title "Startup takes an average of $average seconds" `
-                -Details ('Largest recorded delays: ' + $(if ($slowdowns) { (($slowdowns | Select-Object -First 5 | ForEach-Object { "$($_.Name) (+$($_.AverageDelaySeconds)s)" }) -join ', ') } else { 'Unknown' })) `
-                -Recommendation 'Review the startup apps and delays listed in the report.' -Action Ask
+            Add-Finding -Id 'SLOW_STARTUP' -Severity $severity -Category Startup -Title (T 'Startup takes an average of {0} seconds' $average) `
+                -Details (T 'Largest recorded delays: {0}' $(if ($slowdowns) { (($slowdowns | Select-Object -First 5 | ForEach-Object { "$($_.Name) (+$($_.AverageDelaySeconds)s)" }) -join ', ') } else { T 'Unknown' })) `
+                -Recommendation (T 'Review the startup apps and delays listed in the report.') -Action Ask
         } else {
-            Add-Finding -Id 'STARTUP_OK' -Severity OK -Category Startup -Title "Startup takes an average of $average seconds"
+            Add-Finding -Id 'STARTUP_OK' -Severity OK -Category Startup -Title (T 'Startup takes an average of {0} seconds' $average)
         }
     }
 }
 
-Invoke-Check 'Installed apps and security' {
+Invoke-Check (T 'Installed apps and security') {
     $programs = @(Get-InstalledPrograms)
     $unwanted = @(Get-UnwantedPrograms $programs)
     $script:report.Programs = [ordered]@{
@@ -460,8 +466,8 @@ Invoke-Check 'Installed apps and security' {
         All = @($programs | Select-Object Name, Version, Publisher, SizeMB)
     }
     if ($unwanted.Count) {
-        Add-Finding -Id 'UNWANTED_APPS' -Severity Warning -Category Apps -Title "$($unwanted.Count) potentially unwanted apps found" `
-            -Details ($unwanted.Name -join ', ') -Recommendation 'Review and uninstall apps you do not want.' -Action Ask
+        Add-Finding -Id 'UNWANTED_APPS' -Severity Warning -Category Apps -Title (T '{0} potentially unwanted apps found' $unwanted.Count) `
+            -Details ($unwanted.Name -join ', ') -Recommendation (T 'Review and uninstall apps you do not want.') -Action Ask
     }
     $antivirus = @(Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction SilentlyContinue | ForEach-Object {
         [pscustomobject]@{ Name = $_.displayName; Active = [bool]($_.productState -band 0x1000); Updated = -not [bool]($_.productState -band 0x10) }
@@ -478,19 +484,19 @@ Invoke-Check 'Installed apps and security' {
     }
     $activeAntivirus = @($antivirus | Where-Object Active)
     if ($activeAntivirus.Count -ge 2) {
-        Add-Finding -Id 'MULTIPLE_ANTIVIRUS' -Severity Warning -Category Security -Title 'Multiple antivirus products appear active' `
-            -Details ($activeAntivirus.Name -join ', ') -Recommendation 'Keep one antivirus product; Microsoft Defender is sufficient for most people.' -Action Ask
+        Add-Finding -Id 'MULTIPLE_ANTIVIRUS' -Severity Warning -Category Security -Title (T 'Multiple antivirus products appear active') `
+            -Details ($activeAntivirus.Name -join ', ') -Recommendation (T 'Keep one antivirus product; Microsoft Defender is sufficient for most people.') -Action Ask
     }
     if ($activeAntivirus.Count -eq 0 -and -not $defenderActive) {
-        Add-Finding -Id 'NO_ANTIVIRUS' -Severity Critical -Category Security -Title 'No active antivirus product was detected' `
-            -Recommendation 'Enable Microsoft Defender or another trusted antivirus product.' -Action Manual
+        Add-Finding -Id 'NO_ANTIVIRUS' -Severity Critical -Category Security -Title (T 'No active antivirus product was detected') `
+            -Recommendation (T 'Enable Microsoft Defender or another trusted antivirus product.') -Action Manual
     }
     if ($defender -and $defender.AntivirusSignatureAge -gt 7) {
-        Add-Finding -Id 'DEFENDER_SIGNATURES_OLD' -Severity Warning -Category Security -Title "Defender definitions are $($defender.AntivirusSignatureAge) days old" -Action Automatic
+        Add-Finding -Id 'DEFENDER_SIGNATURES_OLD' -Severity Warning -Category Security -Title (T 'Defender definitions are {0} days old' $defender.AntivirusSignatureAge) -Action Automatic
     }
 }
 
-Invoke-Check 'Power settings, TRIM, and temporary files' {
+Invoke-Check (T 'Power settings, TRIM, and temporary files') {
     $powerText = (powercfg /getactivescheme) -join ' '
     $powerGuid = $null
     $powerName = $null
@@ -510,17 +516,17 @@ Invoke-Check 'Power settings, TRIM, and temporary files' {
         FastStartup = $script:report.System.FastStartup
     }
     if ($powerGuid -eq 'a1841308-3540-4fab-bc81-f71556f20b4a') {
-        Add-Finding -Id 'POWER_SAVER' -Severity Warning -Category Settings -Title 'The active power plan is Power Saver' `
-            -Recommendation 'Switch to Balanced.' -Action Automatic
+        Add-Finding -Id 'POWER_SAVER' -Severity Warning -Category Settings -Title (T 'The active power plan is Power Saver') `
+            -Recommendation (T 'Switch to Balanced.') -Action Automatic
     }
     $hasSsd = @($script:report.Drives.Physical | Where-Object MediaType -eq 'SSD').Count -gt 0
     if ($trimEnabled -eq $false -and $hasSsd) {
-        Add-Finding -Id 'TRIM_DISABLED' -Severity Warning -Category Settings -Title 'TRIM is disabled for SSDs' `
-            -Recommendation 'Enable TRIM to maintain SSD performance.' -Action Automatic
+        Add-Finding -Id 'TRIM_DISABLED' -Severity Warning -Category Settings -Title (T 'TRIM is disabled for SSDs') `
+            -Recommendation (T 'Enable TRIM to maintain SSD performance.') -Action Automatic
     }
     if (-not $storageSense) {
-        Add-Finding -Id 'STORAGE_SENSE_DISABLED' -Severity Info -Category Settings -Title 'Storage Sense is disabled' `
-            -Recommendation 'Enable it to let Windows clean up temporary files automatically.' -Action Automatic
+        Add-Finding -Id 'STORAGE_SENSE_DISABLED' -Severity Info -Category Settings -Title (T 'Storage Sense is disabled') `
+            -Recommendation (T 'Enable it to let Windows clean up temporary files automatically.') -Action Automatic
     }
     $cleanable = @(Get-CleanableFolders | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; Path = $_.Path; SizeGB = Get-FolderSizeGB $_.Path }
@@ -535,11 +541,11 @@ Invoke-Check 'Power settings, TRIM, and temporary files' {
     }
     $cleanableTotal = ($cleanable | Measure-Object SizeGB -Sum).Sum
     if ($cleanableTotal -ge 2) {
-        Add-Finding -Id 'CLEANABLE_FILES' -Severity Info -Category Drive -Title "About $([math]::Round($cleanableTotal, 1)) GB of temporary files and cache can be cleaned" -Action Automatic
+        Add-Finding -Id 'CLEANABLE_FILES' -Severity Info -Category Drive -Title (T 'About {0} GB of temporary files and cache can be cleaned' ([math]::Round($cleanableTotal, 1))) -Action Automatic
     }
 }
 
-Invoke-Check 'Windows errors and reliability' {
+Invoke-Check (T 'Windows errors and reliability') {
     $since = (Get-Date).AddDays(-7)
     $systemErrors = @($script:systemEvents | Where-Object { $_.Level -le 2 -and $_.TimeCreated -ge $since })
     $appErrors = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 1, 2; StartTime = $since } -MaxEvents 3000 -ErrorAction SilentlyContinue)
@@ -571,27 +577,27 @@ Invoke-Check 'Windows errors and reliability' {
         UnexpectedShutdowns30Days = $unexpectedShutdowns
     }
     if ($null -ne $stability -and $stability -lt 5) {
-        Add-Finding -Id 'LOW_STABILITY' -Severity Warning -Category Windows -Title "Windows reliability index is $stability out of 10" `
-            -Details 'Review Reliability Monitor (perfmon /rel) for more information.' `
-            -Recommendation 'Check and repair Windows system files with DISM and SFC.' -Action Automatic
+        Add-Finding -Id 'LOW_STABILITY' -Severity Warning -Category Windows -Title (T 'Windows reliability index is {0} out of 10' $stability) `
+            -Details (T 'Review Reliability Monitor (perfmon /rel) for more information.') `
+            -Recommendation (T 'Check and repair Windows system files with DISM and SFC.') -Action Automatic
     }
     if ($hardwareErrors -gt 0) {
-        Add-Finding -Id 'HARDWARE_ERRORS' -Severity Warning -Category Hardware -Title "$hardwareErrors uncorrected hardware errors in the last 30 days" `
-            -Details 'Possible causes include unstable overclocking/XMP, overheating, or failing hardware.' `
-            -Recommendation 'Check temperatures with HWiNFO and temporarily disable overclocking.' -Action Manual
+        Add-Finding -Id 'HARDWARE_ERRORS' -Severity Warning -Category Hardware -Title (T '{0} uncorrected hardware errors in the last 30 days' $hardwareErrors) `
+            -Details (T 'Possible causes include unstable overclocking/XMP, overheating, or failing hardware.') `
+            -Recommendation (T 'Check temperatures with HWiNFO and temporarily disable overclocking.') -Action Manual
     } elseif ($correctedHardwareErrors -ge 100) {
-        Add-Finding -Id 'CORRECTED_HARDWARE_ERRORS' -Severity Info -Category Hardware -Title "$correctedHardwareErrors corrected hardware events in the last 30 days" `
-            -Details 'These are often harmless (for example, corrected PCIe errors), but a high count may warrant investigation.' `
-            -Recommendation 'If the computer has problems, check BIOS/chipset updates and make sure expansion cards and NVMe drives are seated correctly.' -Action Manual
+        Add-Finding -Id 'CORRECTED_HARDWARE_ERRORS' -Severity Info -Category Hardware -Title (T '{0} corrected hardware events in the last 30 days' $correctedHardwareErrors) `
+            -Details (T 'These are often harmless (for example, corrected PCIe errors), but a high count may warrant investigation.') `
+            -Recommendation (T 'If the computer has problems, check BIOS/chipset updates and make sure expansion cards and NVMe drives are seated correctly.') -Action Manual
     }
     if ($unexpectedShutdowns -ge 3) {
-        Add-Finding -Id 'UNEXPECTED_SHUTDOWNS' -Severity Warning -Category Hardware -Title "$unexpectedShutdowns unexpected shutdowns in the last 30 days" `
-            -Details 'Possible causes include overheating, the power supply, unstable overclocking, or forced shutdowns.' `
-            -Recommendation 'Check temperatures and dust buildup.' -Action Manual
+        Add-Finding -Id 'UNEXPECTED_SHUTDOWNS' -Severity Warning -Category Hardware -Title (T '{0} unexpected shutdowns in the last 30 days' $unexpectedShutdowns) `
+            -Details (T 'Possible causes include overheating, the power supply, unstable overclocking, or forced shutdowns.') `
+            -Recommendation (T 'Check temperatures and dust buildup.') -Action Manual
     }
 }
 
-Invoke-Check 'Graphics driver and Windows Update' {
+Invoke-Check (T 'Graphics driver and Windows Update') {
     $graphics = @(Get-CimInstance Win32_VideoController | ForEach-Object {
         [pscustomobject]@{
             Name = $_.Name
@@ -602,25 +608,25 @@ Invoke-Check 'Graphics driver and Windows Update' {
     })
     foreach ($card in $graphics) {
         if ($card.Name -match 'Microsoft Basic Display') {
-            Add-Finding -Id 'BASIC_DISPLAY_DRIVER' -Severity Critical -Category Drivers -Title 'The graphics card driver is missing' `
-                -Recommendation 'Install the graphics driver from NVIDIA, AMD, or Intel.' -Action Manual
+            Add-Finding -Id 'BASIC_DISPLAY_DRIVER' -Severity Critical -Category Drivers -Title (T 'The graphics card driver is missing') `
+                -Recommendation (T 'Install the graphics driver from NVIDIA, AMD, or Intel.') -Action Manual
         } elseif ($card.Name -match 'NVIDIA|Radeon|Arc' -and $card.AgeMonths -ge 12) {
-            Add-Finding -Id 'OLD_GRAPHICS_DRIVER' -Severity Info -Category Drivers -Title "The graphics driver is $($card.AgeMonths) months old" `
-                -Details $card.Name -Recommendation 'Check for an update using the vendor app or official website.' -Action Manual
+            Add-Finding -Id 'OLD_GRAPHICS_DRIVER' -Severity Info -Category Drivers -Title (T 'The graphics driver is {0} months old' $card.AgeMonths) `
+                -Details $card.Name -Recommendation (T 'Check for an update using the vendor app or official website.') -Action Manual
         }
     }
     $latestHotfix = Get-HotFix -ErrorAction SilentlyContinue | Where-Object InstalledOn |
         Sort-Object InstalledOn -Descending | Select-Object -First 1
     $pendingUpdates = $null
     if (-not $SkipUpdateCheck) {
-        Write-Host '        Checking for Windows updates (up to 4 minutes)...' -ForegroundColor DarkGray
+        Write-Host ('        ' + (T 'Checking for Windows updates (up to 4 minutes)...')) -ForegroundColor DarkGray
         $job = Start-Job -ScriptBlock {
             $session = New-Object -ComObject Microsoft.Update.Session
             $result = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
             @($result.Updates | ForEach-Object { $_.Title })
         }
         if (Wait-Job $job -Timeout 240) { $pendingUpdates = @(Receive-Job $job -ErrorAction SilentlyContinue) }
-        else { $script:scriptErrors.Add('The Windows Update search timed out.') }
+        else { $script:scriptErrors.Add((T 'The Windows Update search timed out.')) }
         Remove-Job $job -Force -ErrorAction SilentlyContinue
     }
     $script:report.Updates = [ordered]@{
@@ -629,31 +635,72 @@ Invoke-Check 'Graphics driver and Windows Update' {
         PendingUpdates = $pendingUpdates
     }
     if ($pendingUpdates -and $pendingUpdates.Count) {
-        Add-Finding -Id 'UPDATES_PENDING' -Severity Info -Category Windows -Title "$($pendingUpdates.Count) Windows updates are available" `
-            -Details ($pendingUpdates -join '; ') -Recommendation 'Install them through Windows Update.' -Action Automatic
+        Add-Finding -Id 'UPDATES_PENDING' -Severity Info -Category Windows -Title (T '{0} Windows updates are available' $pendingUpdates.Count) `
+            -Details ($pendingUpdates -join '; ') -Recommendation (T 'Install them through Windows Update.') -Action Automatic
     }
     if ($latestHotfix -and ((Get-Date) - $latestHotfix.InstalledOn).TotalDays -gt 60) {
-        Add-Finding -Id 'WINDOWS_UPDATE_OLD' -Severity Warning -Category Windows -Title "No Windows update has been installed since $($latestHotfix.InstalledOn.ToString('yyyy-MM-dd'))" `
-            -Details 'Windows Update may be stuck.' -Recommendation 'Run Windows Update; if it fails, repair Windows with DISM and SFC.' -Action Automatic
+        Add-Finding -Id 'WINDOWS_UPDATE_OLD' -Severity Warning -Category Windows -Title (T 'No Windows update has been installed since {0}' $latestHotfix.InstalledOn.ToString('yyyy-MM-dd')) `
+            -Details (T 'Windows Update may be stuck.') -Recommendation (T 'Run Windows Update; if it fails, repair Windows with DISM and SFC.') -Action Automatic
     }
 }
 
-Add-Finding -Id 'CHECK_TEMPERATURES' -Severity Info -Category Hardware -Title 'Check temperatures and dust' `
-    -Details 'PowerShell cannot reliably read CPU and GPU temperatures on all systems.' `
-    -Recommendation 'Use HWiNFO sensors while gaming. If temperatures are high, check fans, airflow, and dust.' -Action Manual
+Add-Finding -Id 'CHECK_TEMPERATURES' -Severity Info -Category Hardware -Title (T 'Check temperatures and dust') `
+    -Details (T 'PowerShell cannot reliably read CPU and GPU temperatures on all systems.') `
+    -Recommendation (T 'Use HWiNFO sensors while gaming. If temperatures are high, check fans, airflow, and dust.') -Action Manual
 
 $severityOrder = @{ Critical = 0; Warning = 1; Info = 2; OK = 3 }
 $findings = @($script:findings | Sort-Object { $severityOrder[$_.Severity] }, Category)
+
+# Trial score in the style of an IGP judge's protocol: three phases with 100 points each.
+$script:trialPhases = [ordered]@{
+    A = @{ Name = 'Tracking'; Covers = 'Drive, memory and performance'; Categories = @('Drive', 'Memory', 'Performance') }
+    B = @{ Name = 'Obedience'; Covers = 'Windows, startup and settings'; Categories = @('System', 'Startup', 'Settings', 'Windows', 'Drivers') }
+    C = @{ Name = 'Protection'; Covers = 'Security, apps and hardware'; Categories = @('Security', 'Apps', 'Hardware') }
+}
+function Get-TrialGrade([int]$Points, [int]$Max) {
+    $limits = if ($Max -eq 300) { @(286, 270, 240, 220) } else { @(96, 90, 80, 70) }
+    if ($Points -ge $limits[0]) { 'Excellent' } elseif ($Points -ge $limits[1]) { 'Very good' } elseif ($Points -ge $limits[2]) { 'Good' } elseif ($Points -ge $limits[3]) { 'Sufficient' } else { 'Insufficient' }
+}
+function Get-TrialScore($Findings) {
+    $deduction = @{ Critical = 30; Warning = 10; Info = 3; OK = 0 }
+    $phases = [ordered]@{}
+    $total = 0
+    foreach ($key in $script:trialPhases.Keys) {
+        $points = 100
+        foreach ($finding in @($Findings | Where-Object { $_.Category -in $script:trialPhases[$key].Categories -and $_.Id -ne 'CHECK_TEMPERATURES' })) {
+            $points -= $deduction[$finding.Severity]
+        }
+        $points = [math]::Max(0, $points)
+        $total += $points
+        $phases[$key] = [ordered]@{ Points = $points; Grade = Get-TrialGrade $points 100 }
+    }
+    [ordered]@{ Total = $total; Grade = Get-TrialGrade $total 300; Phases = $phases }
+}
+
+$folderName = "{0}_{1}" -f $env:COMPUTERNAME, $startedAt.ToString('yyyy-MM-dd_HHmm')
+$score = Get-TrialScore $findings
+$previousReport = Get-ChildItem -LiteralPath $script:ReportsRoot -Directory -Filter "$($env:COMPUTERNAME)_*" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -lt $folderName -and (Test-Path -LiteralPath (Join-Path $_.FullName 'diagnostic-report.json')) } |
+    Sort-Object Name -Descending | Select-Object -First 1
+if ($previousReport) {
+    try {
+        $previousMeta = (Get-Content -LiteralPath (Join-Path $previousReport.FullName 'diagnostic-report.json') -Raw | ConvertFrom-Json).Meta
+        if ($previousMeta.Score) { $score.Previous = [ordered]@{ Total = [int]$previousMeta.Score.Total; Date = $previousMeta.Date } }
+    } catch {}
+}
 $script:report.Meta = [ordered]@{
     Version = $script:ToolkitVersion
     Date = $startedAt.ToString('yyyy-MM-dd HH:mm')
     RanAsAdmin = $isAdmin
     DurationSeconds = [math]::Round(((Get-Date) - $startedAt).TotalSeconds, 0)
+    Theme = $script:ToolkitTheme
+    Score = $score
     ScriptErrors = @($script:scriptErrors)
+    MissingTranslations = @()
 }
 $script:report.Findings = $findings
 
-$outputFolder = Join-Path $script:ReportsRoot ("{0}_{1}" -f $env:COMPUTERNAME, $startedAt.ToString('yyyy-MM-dd_HHmm'))
+$outputFolder = Join-Path $script:ReportsRoot $folderName
 New-Item -ItemType Directory -Path $outputFolder -Force | Out-Null
 $jsonPath = Join-Path $outputFolder 'diagnostic-report.json'
 $htmlPath = Join-Path $outputFolder 'diagnostic-report.html'
@@ -687,7 +734,8 @@ $sectionTitles = [ordered]@{
     Cleanable = 'Space that can be freed'; Errors = 'Errors and stability'; Updates = 'Drivers and updates'
 }
 
-function ConvertTo-Label([string]$Name) {
+function ConvertTo-Label([string]$Name) { T (ConvertTo-EnglishLabel $Name) }
+function ConvertTo-EnglishLabel([string]$Name) {
     if ($script:labelOverrides.ContainsKey($Name)) { return $script:labelOverrides[$Name] }
     $unit = ''
     foreach ($pair in @(@('Percent', '%'), @('GB', 'GB'), @('MB', 'MB'), @('MHz', 'MHz'), @('Seconds', 's'))) {
@@ -704,7 +752,7 @@ function ConvertTo-Label([string]$Name) {
     ($words -join ' ') + $unit
 }
 function Test-IsNumber($Value) { $Value -is [System.ValueType] -and $Value -isnot [bool] -and $Value -isnot [datetime] }
-function New-Pill([string]$Text, [string]$Class) { "<span class=""pill $Class"">$(ConvertTo-SafeHtml $Text)</span>" }
+function New-Pill([string]$Text, [string]$Class) { "<span class=""pill $Class"">$(ConvertTo-SafeHtml (Tv $Text))</span>" }
 function Format-Cell([string]$Column, $Value) {
     if ($null -eq $Value -or "$Value" -eq '') { return '<span class="muted">&ndash;</span>' }
     if ($Value -is [array]) { return ConvertTo-SafeHtml ($Value -join ', ') }
@@ -717,8 +765,9 @@ function Format-Cell([string]$Column, $Value) {
         'Health' { return New-Pill $Value $(if ($Value -eq 'Healthy') { 'good' } elseif ($Value -eq 'Unknown') { 'muted' } else { 'bad' }) }
         'MediaType' { return New-Pill $Value $(if ($Value -eq 'HDD') { 'warn' } else { 'muted' }) }
         'Status' { return New-Pill $Value $(if ($Value -eq 'Running') { 'good' } else { 'muted' }) }
+        'Scope' { return ConvertTo-SafeHtml (Tv $Value) }
     }
-    if ($Value -is [bool]) { return $(if ($Value) { 'Yes' } else { 'No' }) }
+    if ($Value -is [bool]) { return $(if ($Value) { T 'Yes' } else { T 'No' }) }
     ConvertTo-SafeHtml $Value
 }
 function ConvertTo-HtmlTable($Data) {
@@ -727,7 +776,7 @@ function ConvertTo-HtmlTable($Data) {
         elseif ($_ -is [System.Collections.IDictionary]) { [pscustomobject]$_ }
         else { $_ }
     })
-    if (-not $rows.Count) { return '<p class="empty">Nothing to show.</p>' }
+    if (-not $rows.Count) { return "<p class=""empty"">$(T 'Nothing to show.')</p>" }
     $columns = @($rows[0].PSObject.Properties.Name)
     $builder = New-Object System.Text.StringBuilder
     [void]$builder.Append('<div class="table-wrap"><table><thead><tr>')
@@ -748,7 +797,7 @@ function ConvertTo-HtmlTable($Data) {
 function ConvertTo-Collapsible([string]$Title, $Items, [int]$OpenLimit = 10) {
     $count = @($Items | Where-Object { $null -ne $_ }).Count
     $open = if ($count -gt 0 -and $count -le $OpenLimit) { ' open' } else { '' }
-    $filter = if ($count -gt 15) { '<input class="filter" type="search" placeholder="Filter...">' } else { '' }
+    $filter = if ($count -gt 15) { "<input class=""filter"" type=""search"" placeholder=""$(T 'Filter...')"">" } else { '' }
     "<details class=""sub""$open><summary>$(ConvertTo-SafeHtml $Title) <span class=""count"">$count</span></summary>$filter$(ConvertTo-HtmlTable $Items)</details>"
 }
 function ConvertTo-KeyValueHtml($Pairs) {
@@ -766,12 +815,12 @@ function ConvertTo-VolumeHtml($Volumes) {
         $label = if ($volume.Label) { ConvertTo-SafeHtml $volume.Label } else { '' }
         @"
 <div class="volume"><div class="vol-head"><strong>$(ConvertTo-SafeHtml $volume.Drive)</strong> <span>$label</span> $(Format-Cell 'MediaType' $volume.MediaType)
-<span class="vol-free">$($volume.FreeGB) GB free of $($volume.SizeGB) GB ($freePercent % free)</span></div>
+<span class="vol-free">$(T '{0} GB free of {1} GB ({2} % free)' $volume.FreeGB $volume.SizeGB $freePercent)</span></div>
 <div class="bar"><div class="fill $class" style="width:$used%"></div></div>
 <div class="hint">$(ConvertTo-SafeHtml $volume.PhysicalDrive)</div></div>
 "@
     }
-    if (-not $items) { return '<p class="empty">Nothing to show.</p>' }
+    if (-not $items) { return "<p class=""empty"">$(T 'Nothing to show.')</p>" }
     $items -join "`n"
 }
 function ConvertTo-SectionBody($Value) {
@@ -803,27 +852,27 @@ $system = $script:report.System
 $memory = $script:report.Memory
 $stats = @()
 if ($system) {
-    $stats += New-Stat 'Windows' ($system.Windows -replace '^Microsoft\s+', '') "Version $($system.Version), build $($system.Build)"
-    $stats += New-Stat 'Processor' ($system.Processor -replace '\((R|TM)\)', '' -replace '\s+', ' ') "$($system.Cores) cores / $($system.Threads) threads"
-    $stats += New-Stat 'Uptime' "$($system.UptimeDays) days" "Last boot $($system.LastBoot)"
+    $stats += New-Stat 'Windows' ($system.Windows -replace '^Microsoft\s+', '') (T 'Version {0}, build {1}' $system.Version $system.Build)
+    $stats += New-Stat (T 'Processor') ($system.Processor -replace '\((R|TM)\)', '' -replace '\s+', ' ') (T '{0} cores / {1} threads' $system.Cores $system.Threads)
+    $stats += New-Stat (T 'Uptime') (T '{0} days' $system.UptimeDays) (T 'Last boot {0}' $system.LastBoot)
 }
 if ($memory) {
-    $stats += New-Stat 'Memory' "$($memory.TotalGB) GB $($memory.Type)" "$($memory.UsedPercent) % in use, $($memory.ModuleCount) module(s) at $($memory.ConfiguredMHz) MHz"
+    $stats += New-Stat (T 'Memory') "$($memory.TotalGB) GB $($memory.Type)" (T '{0} % in use, {1} module(s) at {2} MHz' $memory.UsedPercent $memory.ModuleCount $memory.ConfiguredMHz)
 }
 $graphicsCards = @($script:report.Updates.GraphicsCards | Where-Object { $_ })
 if ($graphicsCards.Count) {
     $mainGpu = $graphicsCards | Sort-Object { if ($_.Name -match 'Intel|Microsoft Basic') { 1 } else { 0 } } | Select-Object -First 1
-    $stats += New-Stat 'Graphics' $mainGpu.Name "Driver $($mainGpu.DriverVersion) ($($mainGpu.AgeMonths) months old)"
+    $stats += New-Stat (T 'Graphics') $mainGpu.Name (T 'Driver {0} ({1} months old)' $mainGpu.DriverVersion $mainGpu.AgeMonths)
 }
 $systemDrive = @($script:report.Drives.Physical | Where-Object IsSystemDrive) | Select-Object -First 1
 if ($systemDrive) {
-    $stats += New-Stat 'System drive' "$($systemDrive.MediaType) ($($systemDrive.BusType))" "$($systemDrive.Name), health: $($systemDrive.Health)"
+    $stats += New-Stat (T 'System drive') "$($systemDrive.MediaType) ($($systemDrive.BusType))" (T '{0}, health: {1}' $systemDrive.Name (Tv $systemDrive.Health))
 }
 if ($script:report.Startup) {
-    $stats += New-Stat 'Startup apps' "$($script:report.Startup.EnabledCount) enabled" "$(@($script:report.Startup.ThirdPartyServices).Count) third-party services"
+    $stats += New-Stat (T 'Startup apps') (T '{0} enabled' $script:report.Startup.EnabledCount) (T '{0} third-party services' (@($script:report.Startup.ThirdPartyServices).Count))
 }
 if ($script:report.Errors) {
-    $stats += New-Stat 'Stability index' "$($script:report.Errors.StabilityIndex) / 10" "$($script:report.Errors.ErrorCount7Days) errors in the last 7 days"
+    $stats += New-Stat (T 'Stability index') "$($script:report.Errors.StabilityIndex) / 10" (T '{0} errors in the last 7 days' $script:report.Errors.ErrorCount7Days)
 }
 
 # Verdict
@@ -836,25 +885,75 @@ $autoCount = @($problems | Where-Object Action -eq 'Automatic').Count
 $askCount = @($problems | Where-Object Action -eq 'Ask').Count
 $manualCount = @($problems | Where-Object Action -eq 'Manual').Count
 $planParts = @()
-if ($autoCount + $askCount) { $planParts += "$($autoCount + $askCount) can be fixed under Fix problems below" }
-if ($manualCount) { $planParts += "$manualCount need manual action" }
-$planText = if ($planParts.Count) { "Of the $($problems.Count) issue(s): " + ($planParts -join ', ') + '.' } else { '' }
-if ($script:report.Drives.DriveProblem) {
-    $verdictClass = 'bad'; $verdictTitle = 'A drive may be failing'
-    $verdictText = 'Back up important files now. Do not run cleanup, defragmentation or chkdsk until the drive has been checked.'
+if ($autoCount + $askCount) { $planParts += T '{0} can be fixed under Fix problems below' ($autoCount + $askCount) }
+if ($manualCount) { $planParts += T '{0} need manual action' $manualCount }
+$planText = if ($planParts.Count) { T 'Of the {0} issue(s): {1}.' $problems.Count ($planParts -join ', ') } else { '' }
+$driveProblem = [bool]$script:report.Drives.DriveProblem
+if ($driveProblem) {
+    $verdictClass = 'bad'; $verdictTitle = T 'A drive may be failing'
+    $verdictText = T 'Back up important files now. Do not run cleanup, defragmentation or chkdsk until the drive has been checked.'
 } elseif ($counts.Critical) {
-    $verdictClass = 'bad'; $verdictTitle = 'Needs attention'
+    $verdictClass = 'bad'; $verdictTitle = T 'Needs attention'
     $verdictText = $planText
 } elseif ($counts.Warning) {
-    $verdictClass = 'warn'; $verdictTitle = 'Some issues found'
+    $verdictClass = 'warn'; $verdictTitle = T 'Some issues found'
     $verdictText = $planText
 } else {
-    $verdictClass = 'good'; $verdictTitle = 'Looks healthy'
-    $verdictText = 'No significant problems were found.'
+    $verdictClass = 'good'; $verdictTitle = T 'Looks healthy'
+    $verdictText = T 'No significant problems were found.'
+}
+$driveBlocked = $driveProblem -or -not [bool]$script:report.Drives.CheckCompleted
+$verdictButton = if ($driveBlocked -or -not $problems.Count) { '' } else { "<a class=""cta"" href=""#fix"">$(T 'Fix problems') &rarr;</a>" }
+
+$gradeClasses = @{ Excellent = 'good'; 'Very good' = 'good'; Good = 'info'; Sufficient = 'warn'; Insufficient = 'bad' }
+if ($sparkollen) {
+    $verdictTitle = if ($driveProblem) { T 'Vet visit needed - back up now' } else {
+        switch ($score.Grade) {
+            'Excellent' { T 'Excellent work! The computer is in top form.' }
+            'Very good' { T 'Very good! Just a few small things to practise.' }
+            'Good' { T 'Good work - a few things to train on.' }
+            'Sufficient' { T 'Passed, but it needs more training.' }
+            default { T 'Not passed this time - time for a training session.' }
+        }
+    }
+    $phaseHtml = foreach ($key in $script:trialPhases.Keys) {
+        $phase = $script:trialPhases[$key]
+        $phaseScore = $score.Phases[$key]
+        $points = if ($driveProblem) { '&ndash;' } else { $phaseScore.Points }
+        $stamp = if ($driveProblem) { '' } else { "<span class=""stamp $($gradeClasses[$phaseScore.Grade])"">$(T $phaseScore.Grade)</span>" }
+        $fillWidth = if ($driveProblem) { 0 } else { $phaseScore.Points }
+        @"
+<div class="phase"><div class="ph-letter">$key</div><div class="ph-body"><div class="ph-name">$(T $phase.Name)</div><div class="hint">$(T $phase.Covers)</div>
+<div class="bar"><div class="fill $($gradeClasses[$phaseScore.Grade])" style="width:$fillWidth%"></div></div></div>
+<div class="ph-score"><b>$points</b><span>/ 100</span>$stamp</div></div>
+"@
+    }
+    if ($driveProblem) {
+        $totalHtml = "<div class=""total vet""><b>!</b><span>$(T 'No points until the drive has been checked')</span></div>"
+    } else {
+        $previousHtml = ''
+        if ($score.Previous) {
+            $difference = $score.Total - $score.Previous.Total
+            $differenceText = if ($difference -gt 0) { "+$difference" } elseif ($difference -lt 0) { "$difference" } else { '&plusmn;0' }
+            $differenceClass = if ($difference -gt 0) { 'up' } elseif ($difference -lt 0) { 'down' } else { '' }
+            $previousHtml = "<small class=""prev"">$(T 'Last time ({0}): {1} points' (ConvertTo-SafeHtml $score.Previous.Date) $score.Previous.Total) <b class=""$differenceClass"">$differenceText</b></small>"
+        }
+        $totalHtml = "<div class=""total""><div class=""kicker"">$(T 'Total')</div><b>$($score.Total)</b><span>$(T 'of 300 points')</span><span class=""stamp big $($gradeClasses[$score.Grade])"">$(T $score.Grade)</span>$previousHtml</div>"
+    }
+    $verdictHtml = @"
+<div class="verdict protocol $verdictClass"><div class="proto-head"><div class="proto-text"><div class="kicker">$(T 'Judge''s protocol')</div><h2>$(ConvertTo-SafeHtml $verdictTitle)</h2>
+<p>$(ConvertTo-SafeHtml $verdictText)</p><p class="tally">$(T '{0} critical, {1} warnings, {2} tips, {3} OK' $counts.Critical $counts.Warning $counts.Info $counts.OK)</p>$verdictButton</div>$totalHtml</div>
+<div class="phases">$($phaseHtml -join "`n")</div></div>
+"@
+} else {
+    $verdictHtml = @"
+<div class="verdict $verdictClass"><div><h2>$verdictTitle</h2><p>$(ConvertTo-SafeHtml $verdictText)</p>$verdictButton</div>
+<div class="counts"><div class="count-box critical"><b>$($counts.Critical)</b>Critical</div><div class="count-box warning"><b>$($counts.Warning)</b>Warnings</div><div class="count-box info"><b>$($counts.Info)</b>Info</div><div class="count-box ok"><b>$($counts.OK)</b>OK</div></div></div>
+"@
 }
 
 # Findings
-$actionLabels = @{ Automatic = @('Fix available below', 'good'); Ask = @('You choose below', 'info'); Manual = @('Manual action', 'warn') }
+$actionLabels = @{ Automatic = @((T 'Fix available below'), 'good'); Ask = @((T 'You choose below'), 'info'); Manual = @((T 'Manual action'), 'warn') }
 $severityOrder = @{ Critical = 0; Warning = 1; Info = 2; OK = 3 }
 function ConvertTo-FindingHtml($Finding) {
     $class = $Finding.Severity.ToLowerInvariant()
@@ -863,7 +962,7 @@ function ConvertTo-FindingHtml($Finding) {
         $tags += New-Pill $actionLabels[$Finding.Action][0] $actionLabels[$Finding.Action][1]
     }
     @"
-<div class="finding $class"><div class="sev">$($Finding.Severity)</div><div class="f-body">
+<div class="finding $class"><div class="sev">$(Tv $Finding.Severity)</div><div class="f-body">
 <div class="f-title">$(ConvertTo-SafeHtml $Finding.Title)</div>
 $(if ($Finding.Details) { "<div class=""f-details"">$(ConvertTo-SafeHtml $Finding.Details)</div>" })
 $(if ($Finding.Recommendation) { "<div class=""f-rec"">&rarr; $(ConvertTo-SafeHtml $Finding.Recommendation)</div>" })
@@ -871,49 +970,64 @@ $(if ($Finding.Recommendation) { "<div class=""f-rec"">&rarr; $(ConvertTo-SafeHt
 "@
 }
 $sortedFindings = @($findings | Sort-Object { $severityOrder[$_.Severity] })
-$findingHtml = @($sortedFindings | Where-Object Severity -ne 'OK' | ForEach-Object { ConvertTo-FindingHtml $_ })
+$problemFindings = @($sortedFindings | Where-Object Severity -ne 'OK')
+if ($sparkollen) {
+    $phaseDogs = @{ A = 'dog-tracker'; C = 'dog-guard' }
+    $findingHtml = @()
+    foreach ($key in $script:trialPhases.Keys) {
+        $phase = $script:trialPhases[$key]
+        $phaseFindings = @($problemFindings | Where-Object { $_.Category -in $phase.Categories })
+        $dog = if ($phaseDogs[$key]) { "<svg class=""dog-mini"" aria-hidden=""true""><use href=""#$($phaseDogs[$key])""/></svg>" } else { '' }
+        $findingHtml += "<h3 class=""phase-head""><span class=""ph-letter"">$key</span>$(T $phase.Name)<span class=""hint"">$(T $phase.Covers)</span>$dog</h3>"
+        $findingHtml += if ($phaseFindings.Count) { $phaseFindings | ForEach-Object { ConvertTo-FindingHtml $_ } } else { "<p class=""clean"">$(T 'Clean track - nothing found here.')</p>" }
+    }
+    $knownCategories = @($script:trialPhases.Values | ForEach-Object { $_.Categories })
+    $findingHtml += @($problemFindings | Where-Object { $_.Category -notin $knownCategories } | ForEach-Object { ConvertTo-FindingHtml $_ })
+} else {
+    $findingHtml = @($problemFindings | ForEach-Object { ConvertTo-FindingHtml $_ })
+}
 $okFindings = @($sortedFindings | Where-Object Severity -eq 'OK')
 if ($okFindings.Count) {
-    $findingHtml += "<details class=""sub""><summary>Checks that passed <span class=""count"">$($okFindings.Count)</span></summary><div class=""pad"">$(($okFindings | ForEach-Object { ConvertTo-FindingHtml $_ }) -join "`n")</div></details>"
+    $findingHtml += "<details class=""sub""><summary>$(T 'Checks that passed') <span class=""count"">$($okFindings.Count)</span></summary><div class=""pad"">$(($okFindings | ForEach-Object { ConvertTo-FindingHtml $_ }) -join "`n")</div></details>"
 }
-if (-not $findingHtml.Count) { $findingHtml = @('<p class="empty">No findings.</p>') }
+if (-not $findingHtml.Count) { $findingHtml = @("<p class=""empty"">$(T 'No findings.')</p>") }
 
 # Detail sections
 $sections = @()
-$navLinks = @('<a href="#findings">Findings</a>')
+$navLinks = @("<a href=""#findings"">$(T 'Findings')</a>")
 $sectionKeys = @($sectionTitles.Keys) + @($script:report.Keys | Where-Object { $_ -notin $sectionTitles.Keys -and $_ -notin 'Meta', 'Findings' })
 foreach ($key in $sectionKeys) {
     if (-not $script:report.Contains($key)) { continue }
-    $title = if ($sectionTitles.Contains($key)) { $sectionTitles[$key] } else { ConvertTo-Label $key }
+    $title = if ($sectionTitles.Contains($key)) { T $sectionTitles[$key] } else { ConvertTo-Label $key }
     $body = if ($key -eq 'Volumes') { ConvertTo-VolumeHtml $script:report[$key] } else { ConvertTo-SectionBody $script:report[$key] }
     $anchor = $key.ToLowerInvariant()
     $navLinks += "<a href=""#$anchor"">$(ConvertTo-SafeHtml $title)</a>"
     $sections += "<section id=""$anchor""><h2>$(ConvertTo-SafeHtml $title)</h2><div class=""card"">$body</div></section>"
 }
 if ($script:scriptErrors.Count) {
-    $navLinks += '<a href="#script-errors">Incomplete checks</a>'
-    $sections += '<section id="script-errors"><h2>Checks that could not be completed</h2><div class="card"><ul>' +
+    $navLinks += "<a href=""#script-errors"">$(T 'Incomplete checks')</a>"
+    $sections += "<section id=""script-errors""><h2>$(T 'Checks that could not be completed')</h2><div class=""card""><ul>" +
         (($script:scriptErrors | ForEach-Object { "<li>$(ConvertTo-SafeHtml $_)</li>" }) -join '') + '</ul></div></section>'
 }
 
-$navLinks = @($navLinks[0], '<a href="#fix">Fix problems</a>') + @($navLinks | Select-Object -Skip 1)
-$driveBlocked = [bool]$script:report.Drives.DriveProblem -or -not [bool]$script:report.Drives.CheckCompleted
-$driveMessage = if ($script:report.Drives.DriveProblem) {
-    'A drive may be failing, so PC Toolkit will not change anything. Back up important files now and have the drive checked.'
+$navLinks = @($navLinks[0], "<a href=""#fix"">$(T 'Fix problems')</a>") + @($navLinks | Select-Object -Skip 1)
+$driveMessage = if ($driveProblem) {
+    T 'A drive may be failing, so PC Toolkit will not change anything. Back up important files now and have the drive checked.'
 } else {
-    'The drive health check could not be completed, so PC Toolkit will not change anything. Ask whoever is helping you.'
+    T 'The drive health check could not be completed, so PC Toolkit will not change anything. Ask whoever is helping you.'
 }
 $fixData = [ordered]@{
     options      = @(Get-RepairOptions (Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json))
     driveBlocked = $driveBlocked
     driveMessage = $driveMessage
+    theme        = $script:ToolkitTheme
+    strings      = Get-StringTable 'Fix'
 }
 $fixJson = ($fixData | ConvertTo-Json -Depth 4 -Compress).Replace('<', '\u003c').Replace('>', '\u003e').Replace('&', '\u0026')
 $fixScript = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'report-fix.js'))
-$verdictButton = if ($driveBlocked -or -not $problems.Count) { '' } else { '<a class="cta" href="#fix">Fix problems &rarr;</a>' }
 
-$adminChip = if ($isAdmin) { '<span class="chip">Ran as administrator</span>' } else { '<span class="chip alert">Not run as administrator &ndash; some data may be missing</span>' }
-$driveBanner = if ($script:report.Drives.DriveProblem) { '<div class="banner">A drive may be failing. Back up important files before doing anything else.</div>' } else { '' }
+$adminChip = if ($isAdmin) { "<span class=""chip"">$(T 'Ran as administrator')</span>" } else { "<span class=""chip alert"">$(T 'Not run as administrator &ndash; some data may be missing')</span>" }
+$driveBanner = if ($driveProblem) { "<div class=""banner"">$(T 'A drive may be failing. Back up important files before doing anything else.')</div>" } else { '' }
 $modelText = ''
 if ($system) {
     $modelName = "$($system.Model)".Trim()
@@ -921,9 +1035,48 @@ if ($system) {
     $modelText = ConvertTo-SafeHtml $modelName.Trim()
 }
 
+$chips = "<span class=""chip"">$($script:report.Meta.Date)</span><span class=""chip"">PC Toolkit $script:ToolkitVersion</span><span class=""chip"">$(T 'Check took {0} s' $script:report.Meta.DurationSeconds)</span>$adminChip"
+$heading = T 'PC health report: {0}' (ConvertTo-SafeHtml $env:COMPUTERNAME)
+if ($sparkollen) {
+    $themeFolder = Join-Path $PSScriptRoot 'themes'
+    $themeCss = [IO.File]::ReadAllText((Join-Path $themeFolder 'sparkollen.css'))
+    $svgDefs = [IO.File]::ReadAllText((Join-Path $themeFolder 'sparkollen-symbols.svg'))
+    $bodyClass = ' class="sparkollen"'
+    $trackPath = 'M0,41.3 L20,43.1 L40,44.6 L60,45.7 L80,46.5 L100,46.9 L120,47 L140,46.6 L160,45.8 L180,44.6 L200,43.2 L220,41.4 L240,39.4 L260,37.3 L280,35 L300,32.7 L320,30.5 L340,28.4 L360,26.4 L380,24.7 L400,23.2 L420,22.1 L440,21.4 L460,21 L480,21.1 L500,21.5 L520,22.4 L540,23.6 L560,25.1 L580,26.9 L600,28.9 L620,31 L640,33.3 L660,35.6 L680,37.8 L700,39.9 L720,41.9 L740,43.6 L760,45 L780,46 L800,46.7 L820,47 L840,46.9 L860,46.4 L880,45.5 L900,44.2 L920,42.7 L940,40.9 L960,38.8 L980,36.6 L1000,34.4'
+    # Paw prints follow the track curve (y = 34 + 13 sin(...)) in the 60 px high track band, alternating left and right foot.
+    $paws = for ($i = 0; $i -lt 10; $i++) {
+        $percent = 4 + $i * 7
+        $y = 34 + 13 * [math]::Sin($percent * 10 / 1000 * 2 * [math]::PI * 1.4 + 0.6)
+        $bottom = [math]::Round(56 + 60 - $y - 7 + $(if ($i % 2) { 5 } else { -5 }))
+        "<svg class=""paw"" aria-hidden=""true"" style=""left:$percent%;bottom:${bottom}px""><use href=""#paw""/></svg>"
+    }
+    $heroHtml = @"
+<header class="hero">
+<svg class="forest" aria-hidden="true" style="color:#163327;fill:currentColor"><use href="#forest-back"/></svg>
+<svg class="track" viewBox="0 0 1000 60" preserveAspectRatio="none" aria-hidden="true"><path d="$trackPath" fill="none" stroke="#ff922b" stroke-width="2.5" stroke-dasharray="7 8" stroke-linecap="round" vector-effect="non-scaling-stroke" opacity=".75"/></svg>
+$($paws -join '')
+<div class="pack" aria-hidden="true"><svg class="dog-tracker" width="96" height="72"><use href="#dog-tracker"/></svg><svg class="dog-guard" width="124" height="92"><use href="#dog-guard"/></svg><svg class="dog-sitter" width="108" height="80"><use href="#dog-sitter"/></svg></div>
+<svg class="forest front" aria-hidden="true" style="color:#0d1e16;fill:currentColor"><use href="#forest-front"/></svg>
+<div class="wrap"><div class="brand"><svg><use href="#paw"/></svg>$(T 'PC Toolkit')</div>
+<h1>$heading</h1>
+<div class="sub">$modelText</div>
+<div class="meta">$chips</div>
+</div></header>
+"@
+} else {
+    $themeCss = ''; $svgDefs = ''; $bodyClass = ''
+    $heroHtml = @"
+<header class="hero"><div class="wrap">
+<h1>$heading</h1>
+<div class="sub">$modelText</div>
+<div class="meta">$chips</div>
+</div></header>
+"@
+}
+
 $html = @"
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PC Toolkit report - $(ConvertTo-SafeHtml $env:COMPUTERNAME)</title>
+<!DOCTYPE html><html lang="$(if ($sparkollen) { 'sv' } else { 'en' })"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$(T 'PC Toolkit report - {0}' (ConvertTo-SafeHtml $env:COMPUTERNAME))</title>
 <style>
 :root{color-scheme:dark;--bg:#14171c;--card:#1d2128;--text:#e6e9ef;--muted:#98a2b3;--border:#2c323c;--crit:#f03e3e;--warn:#f59f00;--info:#339af0;--ok:#40c057;--shadow:0 1px 3px rgba(0,0,0,.35)}
 *{box-sizing:border-box}
@@ -1007,24 +1160,21 @@ footer{margin:40px 0 30px;color:var(--muted);font-size:13px;text-align:center}
 @media (max-width:640px){.counts{margin-left:0}.verdict{padding:18px}.hero h1{font-size:23px}}
 @media print{:root{--bg:#fff;--card:#fff;--text:#000;--muted:#555;--border:#ccc}body{background:#fff;color:#000}header.hero{background:none;color:#000;padding:0 0 16px}.chip{border:1px solid #bbb}
 .verdict{margin-top:0;box-shadow:none;border:1px solid #ccc}nav.toc,.filter,#fix,a.cta{display:none}.card,.finding{box-shadow:none;break-inside:avoid}section{break-inside:avoid-page}}
-</style></head><body>
-<header class="hero"><div class="wrap">
-<h1>PC health report: $(ConvertTo-SafeHtml $env:COMPUTERNAME)</h1>
-<div class="sub">$modelText</div>
-<div class="meta"><span class="chip">$($script:report.Meta.Date)</span><span class="chip">PC Toolkit $script:ToolkitVersion</span><span class="chip">Check took $($script:report.Meta.DurationSeconds) s</span>$adminChip</div>
-</div></header>
+$themeCss
+</style></head><body$bodyClass>
+$svgDefs
+$heroHtml
 <main class="wrap">
-<div class="verdict $verdictClass"><div><h2>$verdictTitle</h2><p>$(ConvertTo-SafeHtml $verdictText)</p>$verdictButton</div>
-<div class="counts"><div class="count-box critical"><b>$($counts.Critical)</b>Critical</div><div class="count-box warning"><b>$($counts.Warning)</b>Warnings</div><div class="count-box info"><b>$($counts.Info)</b>Info</div><div class="count-box ok"><b>$($counts.OK)</b>OK</div></div></div>
+$verdictHtml
 $driveBanner
 <div class="grid">$($stats -join "`n")</div>
-<nav class="toc">$($navLinks -join '')<span class="toolbar"><button type="button" onclick="setAll(true)">Expand all</button><button type="button" onclick="setAll(false)">Collapse all</button></span></nav>
-<section id="findings"><h2>Findings</h2>
+<nav class="toc">$($navLinks -join '')<span class="toolbar"><button type="button" onclick="setAll(true)">$(T 'Expand all')</button><button type="button" onclick="setAll(false)">$(T 'Collapse all')</button></span></nav>
+<section id="findings"><h2>$(T 'Findings')</h2>
 $($findingHtml -join "`n")
 </section>
-<section id="fix"><h2>Fix problems</h2><div class="card fix-card" id="fix-panel"><noscript>Turn on JavaScript to choose fixes.</noscript></div></section>
+<section id="fix"><h2>$(T 'Fix problems')</h2><div class="card fix-card" id="fix-panel"><noscript>$(T 'Turn on JavaScript to choose fixes.')</noscript></div></section>
 $($sections -join "`n")
-<footer>Generated by PC Toolkit $script:ToolkitVersion on $($script:report.Meta.Date). The same data is available in diagnostic-report.json.</footer>
+<footer>$(T 'Generated by PC Toolkit {0} on {1}. The same data is available in diagnostic-report.json.' $script:ToolkitVersion $script:report.Meta.Date)</footer>
 </main>
 <script>
 function setAll(open){document.querySelectorAll('details').forEach(function(d){d.open=open})}
@@ -1040,16 +1190,23 @@ $fixScript
 "@
 Set-Content -LiteralPath $htmlPath -Value $html -Encoding UTF8
 
-Write-Section 'Summary'
+Write-Section (T 'Summary of findings')
 $colors = @{ Critical = 'Red'; Warning = 'Yellow'; Info = 'Cyan'; OK = 'Green' }
 foreach ($finding in $findings) {
-    Write-Host ("  {0,-8} " -f $finding.Severity) -ForegroundColor $colors[$finding.Severity] -NoNewline
+    Write-Host ("  {0,-12} " -f (Tv $finding.Severity)) -ForegroundColor $colors[$finding.Severity] -NoNewline
     Write-Host $finding.Title
 }
-if ($script:report.Drives.DriveProblem) {
-    Write-Host "`n  !!! A DRIVE MAY BE FAILING. BACK UP IMPORTANT FILES NOW !!!" -ForegroundColor Red
+if ($sparkollen -and -not $driveProblem) {
+    Write-Host ("`n  " + (T 'Judge''s protocol: {0} of 300 points - {1}' $score.Total (T $score.Grade))) -ForegroundColor Green
 }
-Write-Host "`nReports saved to: $outputFolder" -ForegroundColor Green
+if ($driveProblem) {
+    Write-Host ("`n  " + (T '!!! A DRIVE MAY BE FAILING. BACK UP IMPORTANT FILES NOW !!!')) -ForegroundColor Red
+}
+if ($script:MissingStrings.Count) {
+    $script:report.Meta.MissingTranslations = @($script:MissingStrings | Sort-Object)
+    $script:report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
+}
+Write-Host ("`n" + (T 'Reports saved to: {0}' $outputFolder)) -ForegroundColor Green
 if (-not $Quiet) {
     $serverArgs = @{ ReportFolder = $outputFolder }
     if ($DryRunRepairs) { $serverArgs.DryRun = $true }
@@ -1057,9 +1214,9 @@ if (-not $Quiet) {
     try {
         & (Join-Path $PSScriptRoot 'ReportServer.ps1') @serverArgs
     } catch {
-        Write-Warning "Could not start the fix page: $($_.Exception.Message)"
-        Write-Host 'Opening the read-only report instead. Fixes can also be run with scripts\Repair.ps1.'
+        Write-Warning (T 'Could not start the fix page: {0}' $_.Exception.Message)
+        Write-Host (T 'Opening the read-only report instead. Fixes can also be run with scripts\Repair.ps1.')
         Invoke-Item -LiteralPath $htmlPath
-        Read-Host 'Press Enter to close'
+        Read-Host (T 'Press Enter to close')
     }
 }

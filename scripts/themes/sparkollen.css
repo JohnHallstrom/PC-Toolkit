@@ -1,0 +1,68 @@
+/* Theme "Sparkollen" (Spårkollen): evening forest, orange tracking line, reflective-vest yellow warnings. */
+body.sparkollen{--bg:#0e1611;--card:#17221b;--text:#e9efe6;--muted:#9fb2a4;--border:#2a3a2f;--crit:#ff6b6b;--warn:#fcc419;--info:#74c0fc;--ok:#69db7c;--accent:#ff922b;--accent-hover:#ffa94d}
+svg.defs{position:absolute;width:0;height:0;overflow:hidden}
+body.sparkollen header.hero{position:relative;overflow:hidden;padding:30px 0 136px;
+background:radial-gradient(circle at 74% 26%,#fff3bf 0 22px,rgba(255,243,191,.18) 23px 54px,transparent 55px),
+radial-gradient(1px 1px at 12% 20%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 33% 12%,#fff 50%,transparent 51%),
+radial-gradient(1px 1px at 52% 30%,#fff 50%,transparent 51%),radial-gradient(1.5px 1.5px at 88% 14%,#fff 50%,transparent 51%),
+radial-gradient(1px 1px at 63% 8%,#fff 50%,transparent 51%),radial-gradient(1px 1px at 94% 36%,#fff 50%,transparent 51%),
+linear-gradient(180deg,#0a1424 0%,#14304a 46%,#24503f 80%,#1b3d2f 100%)}
+body.sparkollen .hero .wrap{position:relative;z-index:3}
+.brand{display:flex;align-items:center;gap:8px;font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#ffc078;font-weight:700;margin-bottom:4px}
+.brand svg{width:18px;height:18px;color:var(--accent);transform:rotate(20deg)}
+.hero svg.forest{position:absolute;left:0;bottom:0;width:100%;height:118px;z-index:0}
+.hero svg.forest.front{height:72px;z-index:2}
+.hero svg.track{position:absolute;left:0;bottom:56px;width:100%;height:60px;z-index:1}
+.hero .paw{position:absolute;width:15px;height:15px;color:var(--accent);opacity:.85;z-index:1;transform:rotate(90deg)}
+.pack{position:absolute;bottom:52px;right:max(20px,calc(50% - 570px));display:flex;align-items:flex-end;gap:2px;z-index:1}
+.pack svg{filter:drop-shadow(0 0 1px rgba(255,255,255,.35)) drop-shadow(0 3px 3px rgba(0,0,0,.5))}
+.dog-guard{color:#d39a5c}.dog-tracker{color:#b4613a}.dog-sitter{color:#8f9aa6}
+body.sparkollen .chip{background:rgba(10,20,15,.55);border:1px solid rgba(255,255,255,.12)}
+body.sparkollen .chip.alert{background:var(--warn);color:#3b2a00}
+body.sparkollen a.cta,body.sparkollen button.primary{background:var(--accent);border-color:var(--accent);color:#1d1203}
+body.sparkollen a.cta:hover,body.sparkollen button.primary:hover{background:var(--accent-hover)}
+body.sparkollen .fix-card{border-color:#6b4a24}
+body.sparkollen label.opt input{accent-color:var(--accent)}
+body.sparkollen label.opt:hover{border-color:var(--accent)}
+body.sparkollen .spinner{border-top-color:var(--accent)}
+body.sparkollen nav.toc a:hover{border-color:var(--accent);color:var(--accent)}
+body.sparkollen .fill.good{background:linear-gradient(90deg,#8ce99a,#2f9e44)}
+.fill.info{background:linear-gradient(90deg,#a5d8ff,#339af0)}
+body.sparkollen .finding.warning .sev{color:#2b2000}
+body.sparkollen .pill.warn{background:#3a3010;color:#ffe066;border-color:#5c4d12}
+/* Judge's protocol */
+.verdict.protocol{display:block;position:relative;z-index:5}
+.proto-head{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.proto-text{flex:1;min-width:260px}
+.kicker{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:700;margin-bottom:2px}
+.verdict p.tally{font-size:13px;margin-top:8px}
+.total{min-width:180px;text-align:center;padding:12px 18px;border:2px dashed var(--border);border-radius:12px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.total>b{font-size:46px;line-height:1.05}.total>span{color:var(--muted);font-size:13px}
+.total.vet{border-color:var(--crit);max-width:240px}.total.vet>b{color:var(--crit)}.total.vet span{color:var(--text)}
+.stamp{display:inline-block;border:2px solid currentColor;border-radius:6px;padding:0 8px;font-weight:800;text-transform:uppercase;font-size:11px;letter-spacing:.06em;transform:rotate(-4deg);white-space:nowrap;margin-top:4px}
+.stamp.big{font-size:15px;padding:2px 12px;margin-top:8px}
+.stamp.good{color:var(--ok)}.stamp.info{color:var(--info)}.stamp.warn{color:var(--warn)}.stamp.bad{color:var(--crit)}
+.prev{color:var(--muted);margin-top:8px;font-size:12px;max-width:200px}.prev b.up{color:var(--ok)}.prev b.down{color:var(--crit)}
+.phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:18px}
+.phase{display:flex;gap:12px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+.ph-letter{width:34px;height:34px;border-radius:50%;background:var(--accent);color:#1d1203;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none;font-size:16px}
+.ph-body{flex:1;min-width:0}.ph-name{font-weight:700}.phase .bar{height:8px;margin:6px 0 0}
+.ph-score{display:flex;flex-direction:column;align-items:flex-end}.ph-score b{font-size:26px;line-height:1}.ph-score span{font-size:12px;color:var(--muted)}
+/* Findings grouped by phase */
+.phase-head{display:flex;align-items:center;gap:10px;font-size:17px;margin:22px 0 10px;flex-wrap:wrap}
+.phase-head .hint{font-weight:400}
+.phase-head .dog-mini{width:58px;height:44px;margin-left:auto}
+.phase-head:first-of-type{margin-top:4px}
+p.clean{color:var(--ok);margin:0 0 10px;padding:10px 14px;border:1px dashed #2b5a37;border-radius:10px;background:rgba(47,158,68,.07)}
+/* Training session (fix panel) */
+.trail{position:relative;height:30px;margin:12px 0 4px;border-bottom:2px dashed rgba(255,146,43,.5)}
+.trail .paw{position:absolute;bottom:4px;width:16px;height:16px;color:var(--accent);transform:rotate(90deg);opacity:0;animation:pawIn .4s forwards}
+.trail .runner{position:absolute;bottom:-2px;width:64px;height:48px;color:#b4613a;transition:left .6s ease;margin-left:-20px}
+@keyframes pawIn{to{opacity:.9}}
+.confetti{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:50}
+.confetti svg{position:absolute;top:-30px;width:30px;height:12px;color:#f1e3c6;animation:fall linear forwards}
+@keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+.result-dog{float:right;width:110px;height:82px;margin:0 0 6px 12px}
+@media (max-width:860px){.pack{display:none}body.sparkollen header.hero{padding-bottom:90px}}
+@media (prefers-reduced-motion:reduce){.trail .paw,.confetti svg{animation:none;opacity:.9}.confetti{display:none}}
+@media print{body.sparkollen header.hero{background:none}.hero svg.forest,.hero svg.track,.hero .paw,.pack,svg.defs{display:none}.brand{color:#000}}
