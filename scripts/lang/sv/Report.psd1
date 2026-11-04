@@ -4,7 +4,7 @@
     'PC Toolkit report - {0}' = 'Spårkollen – domarprotokoll för {0}'
     'PC Toolkit' = 'Spårkollen'
     'PC health report: {0}' = 'Datorprov för {0}'
-    'Check took {0} s' = 'Spårtid: {0} s'
+    'Check took {0} s' = 'Liggtid: {0} s'
     'Ran as administrator' = 'Kördes som administratör'
     'Not run as administrator &ndash; some data may be missing' = 'Kördes inte som administratör &ndash; vissa uppgifter kan saknas'
     'A drive may be failing. Back up important files before doing anything else.' = 'En disk kan hålla på att gå sönder. Säkerhetskopiera viktiga filer innan du gör något annat.'

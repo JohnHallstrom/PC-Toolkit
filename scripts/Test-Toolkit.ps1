@@ -149,7 +149,7 @@ if ($reportPath) {
         $swedishTitles = @($data.Findings | Where-Object { $_.Title -match '[åäöÅÄÖ]' } | ForEach-Object { [System.Net.WebUtility]::HtmlEncode($_.Title) } | Where-Object { $altHtml.Contains($_) })
         Add-Result 'Report is also saved in the classic English theme' ($altHtml -match '<html lang="en"' -and $altHtml -match '</html>\s*$' -and -not $swedishTitles.Count) "$altName$(if ($swedishTitles.Count) { '; Swedish findings: ' + ($swedishTitles -join ' | ') })"
         Add-Result 'Both reports have the theme dropdown' ($html -match 'id="theme-select"' -and $altHtml -match 'id="theme-select"' -and $html.Contains("value=""$altName""") -and $altHtml.Contains('value="diagnostic-report.html"')) ''
-        Add-Result 'Sparkollen report uses Ta spåret and Spårtid' ($html.Contains('Ta spåret') -and $html.Contains('Spårtid:')) ''
+        Add-Result 'Sparkollen report uses Ta spåret and Liggtid' ($html.Contains('Ta spåret') -and $html.Contains('Liggtid:')) ''
     }
 }
 
